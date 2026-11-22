@@ -211,7 +211,7 @@ $shownMembers = $filterWkp === null ? $members
 
 // roles and payment data: secretariat only
 $userRoles = [];
-$sepa = ['enabled' => false, 'amounts' => [], 'methods' => []];
+$sepa = ['enabled' => false, 'methods' => []];
 if ($canEdit && $memberIds) {
     $ph = implode(',', array_fill(0, count($memberIds), '?'));
     $stmt = $gDb->queryPrepared(
@@ -499,7 +499,6 @@ ob_start();
                     $uid = (int)$m['mro_usr_id'];
                     $wid = (int)$m['mro_wkp_id'];
                     $pm = $sepa['methods'][$uid] ?? '';
-                    $amount = $sepa['amounts'][$uid] ?? null;
                 ?>
                 <div class="crm-member-card card">
                     <div class="card-header d-flex justify-content-between align-items-center">
@@ -528,7 +527,7 @@ ob_start();
                         <?php if ($canEdit && $pm !== ''): ?>
                         <div><small class="text-muted fw-bold text-uppercase">Forma de pago</small>
                             <div class="mt-1"><span class="badge bg-success badge-large"><?php echo e($pm); ?></span>
-                            <?php if ($amount !== null): ?><span class="badge bg-success badge-large">Descuento en nómina: <?php echo e(number_format((float)$amount, 2, ',', '.')); ?> €/mes</span><?php endif; ?></div></div>
+</div></div>
                         <?php endif; ?>
 
                         <?php if ($canEdit): ?>

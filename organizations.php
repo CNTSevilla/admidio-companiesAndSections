@@ -313,7 +313,6 @@ ob_start();
                             <span class="badge badge-custom badge-seccion"><i class="bi bi-check-circle"></i> Sí</span>
                             <?php else: ?>
                             <span class="badge badge-custom badge-sin">No</span>
-                            <?php if ($memberCount > 0): ?><br><small class="text-success fw-bold" title="Hay afiliación pero no sección sindical">Se podría constituir</small><?php endif; ?>
                             <?php endif; ?>
                         </td>
                         <td><?php echo e($org['org_nombre_seccion'] ?: '-'); ?></td>

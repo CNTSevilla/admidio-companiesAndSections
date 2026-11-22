@@ -358,27 +358,21 @@ function casReadOrgForm(): array
 }
 
 /**
- * SEPA integration (optional): if the profile fields SEPA_PAYMENT_METHOD and SEPA_QUOTA_TYPE
- * exist, returns per PERSON the payment method and, for payroll deduction, the monthly fee.
- * Payroll deduction is personal: there are no totals per company.
- * Dropdown values in Admidio 5 are stored as option ids (ufo_id).
+ * SEPA integration (optional): if the profile field SEPA_PAYMENT_METHOD exists, returns per
+ * PERSON only how they pay: "Nómina", "Domiciliación" or the option text as it is.
+ * No amounts are shown. Dropdown values in Admidio 5 are stored as option ids (ufo_id).
  *
- * @return array{enabled:bool, amounts:array<int,float>, methods:array<int,string>}
+ * @return array{enabled:bool, methods:array<int,string>}
  */
 function casSepaInfo(array $userIds): array
 {
     global $gDb;
-    $res = ['enabled' => false, 'amounts' => [], 'methods' => []];
+    $res = ['enabled' => false, 'methods' => []];
 
-    $fields = [];
-    $stmt = $gDb->queryPrepared(
-        'SELECT usf_name_intern, usf_id FROM ' . TBL_USER_FIELDS . '
-          WHERE usf_name_intern IN (\'SEPA_PAYMENT_METHOD\', \'SEPA_QUOTA_TYPE\')'
-    );
-    foreach ($stmt->fetchAll() as $row) {
-        $fields[$row['usf_name_intern']] = (int)$row['usf_id'];
-    }
-    if (!isset($fields['SEPA_PAYMENT_METHOD'])) {
+    $fieldId = (int)$gDb->queryPrepared(
+        'SELECT usf_id FROM ' . TBL_USER_FIELDS . ' WHERE usf_name_intern = \'SEPA_PAYMENT_METHOD\''
+    )->fetchColumn();
+    if ($fieldId <= 0) {
         return $res;
     }
     $res['enabled'] = true;
@@ -386,23 +380,11 @@ function casSepaInfo(array $userIds): array
         return $res;
     }
 
-    $fees = ['normal' => 12, 'reduced' => 5];
-    $sepaCfgFile = __DIR__ . '/../sepa_export/config.php';
-    if (is_file($sepaCfgFile)) {
-        // the SEPA plugin config may define $sepaFees
-        (static function () use ($sepaCfgFile, &$fees) {
-            include $sepaCfgFile;
-            if (isset($sepaFees) && is_array($sepaFees)) {
-                $fees = array_merge($fees, $sepaFees);
-            }
-        })();
-    }
-
     // option texts by ufo_id
     $options = [];
     $stmt = $gDb->queryPrepared(
-        'SELECT ufo_id, ufo_value FROM ' . TBL_USER_FIELD_OPTIONS . ' WHERE ufo_usf_id IN (?, ?)',
-        [$fields['SEPA_PAYMENT_METHOD'], $fields['SEPA_QUOTA_TYPE'] ?? 0]
+        'SELECT ufo_id, ufo_value FROM ' . TBL_USER_FIELD_OPTIONS . ' WHERE ufo_usf_id = ?',
+        [$fieldId]
     );
     foreach ($stmt->fetchAll() as $row) {
         $options[(int)$row['ufo_id']] = (string)$row['ufo_value'];
@@ -410,28 +392,19 @@ function casSepaInfo(array $userIds): array
 
     $placeholders = implode(',', array_fill(0, count($userIds), '?'));
     $stmt = $gDb->queryPrepared(
-        'SELECT usd_usr_id, usd_usf_id, usd_value FROM ' . TBL_USER_DATA . '
-          WHERE usd_usf_id IN (?, ?) AND usd_usr_id IN (' . $placeholders . ')',
-        array_merge([$fields['SEPA_PAYMENT_METHOD'], $fields['SEPA_QUOTA_TYPE'] ?? 0], array_map('intval', $userIds))
+        'SELECT usd_usr_id, usd_value FROM ' . TBL_USER_DATA . '
+          WHERE usd_usf_id = ? AND usd_usr_id IN (' . $placeholders . ')',
+        array_merge([$fieldId], array_map('intval', $userIds))
     );
-    $method = [];
-    $quota = [];
     foreach ($stmt->fetchAll() as $row) {
-        $text = $options[(int)$row['usd_value']] ?? (string)$row['usd_value'];
-        if ((int)$row['usd_usf_id'] === $fields['SEPA_PAYMENT_METHOD']) {
-            $method[(int)$row['usd_usr_id']] = $text;
-        } else {
-            $quota[(int)$row['usd_usr_id']] = mb_strtolower($text);
+        $text = trim($options[(int)$row['usd_value']] ?? (string)$row['usd_value']);
+        if (preg_match('/n[oó]mina/iu', $text)) {
+            $text = 'Nómina';
+        } elseif (preg_match('/domicilia|banco|bancari|recibo|sepa/iu', $text)) {
+            $text = 'Domiciliación';
         }
-    }
-
-    foreach ($userIds as $uid) {
-        $uid = (int)$uid;
-        $m = $method[$uid] ?? '';
-        $res['methods'][$uid] = $m;
-        if (preg_match('/n[oó]mina/iu', $m)) {
-            $q = $quota[$uid] ?? 'normal';
-            $res['amounts'][$uid] = (float)(str_contains($q, 'reducida') ? $fees['reduced'] : $fees['normal']);
+        if ($text !== '') {
+            $res['methods'][(int)$row['usd_usr_id']] = $text;
         }
     }
     return $res;

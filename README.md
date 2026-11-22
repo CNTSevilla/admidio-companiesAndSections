@@ -5,7 +5,6 @@ Gestión de empresas, secciones sindicales y afiliación por empresa dentro de A
 ## Qué hace
 
 - Listado de empresas con búsqueda, filtros (sector, con/sin sección sindical, delegado/a) y paginación.
-  Las empresas sin sección pero con afiliación se marcan como *se podría constituir*.
 - Ficha de empresa: datos, sede, sección sindical (nombre, correo, delegados/as) y miembros asignados.
 - **Centros de trabajo** por empresa (nombre, dirección, teléfono, notas). Cada miembro puede
   asignarse a un centro y la lista de miembros se puede filtrar por centro.
@@ -14,8 +13,8 @@ Gestión de empresas, secciones sindicales y afiliación por empresa dentro de A
   haya sección. Esas empresas no pueden tener delegados/as: la casilla no aparece, el servidor la
   ignora y una marca antigua no da acceso. Al quitar la sección a una empresa, sus delegados/as
   pierden el cargo (la afiliación a la empresa y al centro se mantiene).
-- Para la secretaría, cada miembro muestra sus roles vigentes y, si existe el plugin SEPA, su forma de
-  pago y, si paga por nómina, su **descuento mensual personal** (no hay totales por empresa).
+- Para la secretaría, cada miembro muestra sus roles vigentes y, si existe el campo de perfil
+  `SEPA_PAYMENT_METHOD`, su forma de pago: **Nómina** o **Domiciliación** (sin importes).
 - Una empresa solo se puede borrar si no tiene miembros. Al borrar un centro, sus miembros siguen en
   la empresa sin centro.
 
