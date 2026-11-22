@@ -1,38 +1,21 @@
 <?php
 /**
- * Companies and Sections Plugin - API Endpoint
+ * Companies and Sections Plugin - JSON endpoint
  *
- * Get data from company data for AJAX/JavaScript usage.
- * Returns a JSON with active organizations.
- *
- * USAGE: This file is called by profile_js.php to fetch organization data
- * when needed. It checks user permissions based on roles defined in `config.php` and returns a JSON response with the list of active organizations from the `crm_organizations` table.
+ * Returns the active companies (id, uuid, name) as JSON for authorized users.
  *
  * @package CompaniesAndSections
  */
 
-require_once(__DIR__ . '/../../system/common.php');
-
-// Permissions check: only allowed roles or administrators can access
 require_once(__DIR__ . '/organization_functions.php');
-if (!isUserAuthorized($gDb)) {
-    http_response_code(403);
-    header('Content-Type: application/json');
-    echo json_encode(['error' => 'Acceso denegado']);
-    exit;
-}
 
-// Get active organizations
-$stmt = $gDb->queryPrepared(
-    "SELECT org_id, org_name FROM crm_organizations WHERE org_active = 1 ORDER BY org_name",
-    []
-);
+casRequireAuth(true);
 
-$organizations = $stmt->fetchAll();
+$organizations = $gDb->queryPrepared(
+    'SELECT org_id, org_uuid, org_name FROM ' . CAS_TBL_ORGS . ' WHERE org_active = 1 ORDER BY org_name'
+)->fetchAll(PDO::FETCH_ASSOC);
 
-// Return JSON
-header('Content-Type: application/json');
-echo json_encode([
-    'organizations' => $organizations,
-    'count' => count($organizations)
-]);
+header('Content-Type: application/json; charset=UTF-8');
+header('Cache-Control: private, no-store');
+header('X-Content-Type-Options: nosniff');
+echo json_encode(['organizations' => $organizations, 'count' => count($organizations)], JSON_UNESCAPED_UNICODE);

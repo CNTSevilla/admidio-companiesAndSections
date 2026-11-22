@@ -1,14 +1,15 @@
 <?php
 /**
- * Companies and Sections - Permissions Configuration
+ * Companies and Sections - Permissions configuration
  *
- * Edit `allowed_roles` to list the exact names of the roles
- * of Admidio that will be allowed to access the plugin. If the array is empty,
- * only administrators will be able to access it.
+ * Copy this file to config.php and list the EXACT names of the Admidio roles
+ * that may use the plugin. Only CURRENT memberships count (an ended membership
+ * no longer gives access). Administrators always have access.
+ * Empty list = only administrators.
  */
 return [
     'allowed_roles' => [
-        'ROLE_1',
-        'ROLE_2',
+        // 'Secretario/a de Organizacion',
+        // 'Secretario/a de Tesorería',
     ],
 ];

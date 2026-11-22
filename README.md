@@ -1,101 +1,104 @@
-# Organization Members — Admidio Plugin
+# Empresas y secciones — plugin para Admidio 5.x
 
-A plugin for [Admidio](https://www.admidio.org/) 5.x that provides organization/company management and member assignment features.
+Gestión de empresas, secciones sindicales y afiliación por empresa dentro de Admidio.
 
-## Features
+## Qué hace
 
-- Manage organizations/companies with contact, legal, and union section details
-- Create new company and assign members from Admidio users
-- View organization profiles with active members and member roles
-- Delete company only when no members are assigned
-- Automatically synchronize company name changes to user contact data
-- Access control by administrators or configured Admidio roles
+- Listado de empresas con búsqueda, filtros (sector, sección, portavoz) y paginación.
+- Ficha de empresa: datos, dirección, sección sindical (nombre, correo, portavoz) y miembros asignados con su cargo.
+- Para cada miembro muestra sus roles vigentes y, si existe el plugin SEPA, su forma de pago y el total a percibir por nómina.
+- Una empresa solo se puede borrar si no tiene miembros asignados.
 
-## Requirements
+## Qué NO hace
 
-- Admidio 5.x
-- PHP 7.4+ with PDO MySQL support
-- MySQL/MariaDB database used by Admidio
-- Access to Admidio administrator account for installation
+- **No modifica ningún fichero de Admidio** (núcleo, plantillas ni temas). Sobrevive a las actualizaciones.
+- **No crea campos de perfil.** La relación persona–empresa vive en las tablas del plugin.
 
-## Installation
+## Requisitos
 
-1. Copy the `companiesAndSections` folder into `adm_plugins/companies_and_sections/` inside your Admidio installation.
-2. Log in to Admidio as an administrator.
-3. Open the installer in your browser:
+- Admidio 5.x con MySQL/MariaDB
+- PHP 8.1+
+
+## Instalación
+
+1. Copia la carpeta del plugin a `adm_plugins/companies_and_sections/`.
+   El nombre de la carpeta tiene que ser exactamente `companies_and_sections`.
+2. Entra en Admidio como administrador y abre:
    ```
-   https://your-server/adm_plugins/companies_and_sections/install.php
+   https://tu-servidor/adm_plugins/companies_and_sections/install.php
    ```
-4. Follow the installer steps. The installer will:
-   - Create `crm_organizations` and `crm_member_organizations` tables
-   - Create the `CRM_EMPRESA` user profile field and add it to contacts
-   - Inject menu and template modifications for organization links
-   - Create a default `config.php` if one does not exist
-5. After a successful install, `install.php` is removed automatically.
+3. Pulsa **Instalar**. El instalador:
+   - crea las tablas `crm_organizations` y `crm_member_organizations`,
+   - añade la entrada **Empresas y secciones** al menú de Administración,
+   - crea `config.php` (solo administradores) si no existe,
+   - intenta borrarse. Si no puede, **borra `install.php` a mano**.
 
-## Configuration
+Se puede ejecutar varias veces: solo crea lo que falte.
 
-Copy `config.example.php` to `config.php` and edit the `allowed_roles` array.
+### Docker
 
-- If `allowed_roles` is empty, only Admidio administrators can access the plugin.
-- If role names are provided, users with any of those roles can use the plugin.
+Monta la carpeta como volumen para que no se pierda al recrear el contenedor:
 
-Example `config.php`:
+```yaml
+volumes:
+  - ./plugins/companies_and_sections:/opt/app-root/src/adm_plugins/companies_and_sections
+```
+
+(ajusta la ruta de la derecha a donde esté Admidio dentro de tu imagen).
+
+## Permisos
+
+Edita `config.php` (ver `config.example.php`):
 
 ```php
 <?php
 return [
     'allowed_roles' => [
-        'Organization Manager',
-        'HR',
+        'Secretario/a de Organizacion',
+        'Secretario/a de Tesorería',
     ],
 ];
 ```
 
-## Access Control
+- Los administradores siempre tienen acceso.
+- El resto necesita pertenecer **ahora** a uno de esos roles (una pertenencia terminada ya no da acceso).
+- Lista vacía = solo administradores.
+- La entrada de menú es visible para todos por defecto; restríngela en Menú → editar entrada.
+  Las páginas comprueban los permisos igualmente.
 
-The plugin checks user permissions before allowing access:
+El plugin muestra datos sensibles (roles, forma de pago). Da acceso solo a quien lo necesite.
 
-- Administrators always have access.
-- Non-administrator users must belong to at least one role listed in `config.php`.
+## Seguridad
 
-## Plugin Pages
+- Todas las acciones (crear, editar, borrar, asignar, quitar) van por POST con token CSRF de Admidio.
+- Usa la conexión de base de datos de Admidio (`$gDb`); no guarda credenciales.
+- Toda la salida se escapa; las entradas se validan y se recortan al tamaño de las columnas.
+- Los errores de base de datos no se muestran al usuario (se registran en el log).
 
-- `organizations.php` — Main organization list, filters, pagination, and statistics
-- `create_organization.php` — Create a new organization/company
-- `organization_profile.php` — Edit organization details and review assigned members
-- `organization_functions.php` — Shared helper functions, including contact synchronization
-- `profile_js.php` — JavaScript helper injected into Admidio pages
-
-## Behavior
-
-- Organizations are stored in `crm_organizations`.
-- Member assignments are stored in `crm_member_organizations`.
-- When an organization is renamed, `syncOrgNameInContacts()` updates the `CRM_EMPRESA` field in user contact data.
-- Deleting an organization is blocked if it still has active member assignments.
-
-## Tips
-
-- Use role names exactly as they appear in Admidio.
-- Verify that `config.php` is writable during installation.
-- Keep `install.php` removed after installation for security.
-
-## File Structure
+## Ficheros
 
 ```
-organization_members/
+companies_and_sections/
+├── organization_functions.php  # arranque, permisos, CSRF, utilidades
+├── organizations.php           # listado
+├── create_organization.php     # alta de empresa
+├── organization_profile.php    # ficha, edición y miembros
+├── get_organizations.php       # JSON con las empresas activas (usuarios autorizados)
+├── install.php                 # instalador (bórralo tras instalar)
 ├── config.example.php
-├── create_organization.php
-├── install.php
-├── organization_functions.php
-├── organization_profile.php
-├── organizations.php
-├── profile_js.php
-├── README.md
+└── README.md
 ```
 
-## License
+## Desinstalar
 
-See the repository license for details.
+1. Borra la entrada de menú en Menú.
+2. Si quieres borrar también los datos:
+   ```sql
+   DROP TABLE crm_member_organizations;
+   DROP TABLE crm_organizations;
+   ```
+3. Borra la carpeta del plugin.
 
-See [LICENSE](LICENSE).
+## Licencia
+
+Ver [LICENSE](LICENSE).
