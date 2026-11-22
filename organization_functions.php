@@ -145,7 +145,7 @@ function casCanEdit(): bool
 
 /**
  * DELEGATES (read only): ids of the companies WITH a union section where the current user
- * is marked as delegado/a in an active assignment. A company without section has no
+ * is marked as portavoz in an active assignment. A company without section has no
  * delegates: an old mark left in the database never grants access.
  * Delegates only see their own companies and cannot change anything.
  *

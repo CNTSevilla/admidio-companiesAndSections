@@ -113,7 +113,7 @@ ob_start();
                     <input type="text" name="org_nombre_seccion" maxlength="100" class="form-control" value="<?php echo e($d['org_nombre_seccion']); ?>"></div>
                 <div class="col-md-4"><label class="form-label form-label-custom">Correo de la sección</label>
                     <input type="email" name="org_email_seccion" maxlength="100" class="form-control" value="<?php echo e($d['org_email_seccion']); ?>"></div>
-                <div class="col-12 form-text">Los delegados/as se nombran después, en la ficha de la empresa, al asignar a las personas afiliadas.</div>
+                <div class="col-12 form-text">Los portavoces se nombran después, en la ficha de la empresa, al asignar a las personas afiliadas.</div>
             </div></div>
 
             <div class="col-12 mt-5"><h5 class="form-section-title"><i class="bi bi-geo-alt"></i> Dirección</h5></div>

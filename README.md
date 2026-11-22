@@ -4,14 +4,14 @@ Gestión de empresas, secciones sindicales y afiliación por empresa dentro de A
 
 ## Qué hace
 
-- Listado de empresas con búsqueda, filtros (sector, con/sin sección sindical, delegado/a) y paginación.
-- Ficha de empresa: datos, sede, sección sindical (nombre, correo, delegados/as) y miembros asignados.
+- Listado de empresas con búsqueda, filtros (sector, con/sin sección sindical, portavoz) y paginación.
+- Ficha de empresa: datos, sede, sección sindical (nombre, correo, portavoces) y miembros asignados.
 - **Centros de trabajo** por empresa (nombre, dirección, teléfono, notas). Cada miembro puede
   asignarse a un centro y la lista de miembros se puede filtrar por centro.
-- En cada asignación: cargo y marca de **delegado/a** (portavoz y delegado/a son lo mismo).
+- En cada asignación: cargo y marca de **portavoz** (puede haber varios por empresa).
 - **Una empresa puede existir sin sección sindical**: alguien declara dónde trabaja aunque allí no
-  haya sección. Esas empresas no pueden tener delegados/as: la casilla no aparece, el servidor la
-  ignora y una marca antigua no da acceso. Al quitar la sección a una empresa, sus delegados/as
+  haya sección. Esas empresas no pueden tener portavoces: la casilla no aparece, el servidor la
+  ignora y una marca antigua no da acceso. Al quitar la sección a una empresa, sus portavoces
   pierden el cargo (la afiliación a la empresa y al centro se mantiene).
 - Para la secretaría, cada miembro muestra sus roles vigentes y, si existe el campo de perfil
   `SEPA_PAYMENT_METHOD`, su forma de pago: **Nómina** o **Domiciliación** (sin importes).
@@ -48,9 +48,10 @@ Se puede ejecutar varias veces: solo crea lo que falte.
 
 Copia los ficheros nuevos (incluido `install.php`) y vuelve a ejecutar el instalador: añade la tabla de
 centros de trabajo y las columnas nuevas sin tocar los datos existentes. Si vienes de una versión con
-*portavoz*, cada portavoz pasa a ser delegado/a de su empresa (asignándolo si no lo estaba) y se quita la
-marca de delegado/a en las empresas sin sección. Mientras no se actualice, el
-plugin avisa a los administradores y no deja entrar a los delegados.
+un único *portavoz* por empresa, ese portavoz pasa a la nueva marca de su asignación (asignándolo si no lo
+estaba) y se quita la
+marca de portavoz en las empresas sin sección. Mientras no se actualice, el
+plugin avisa a los administradores y no deja entrar a los portavoces.
 
 ### Docker
 
@@ -69,7 +70,7 @@ volumes:
 |---|---|---|
 | Administradores | Todas las empresas | Todo |
 | Secretaría: roles de `allowed_roles` en `config.php` | Todas las empresas, con roles y forma de pago de cada miembro | Todo |
-| Delegados/as: marcados como delegado/a en una asignación de una empresa **con sección sindical** | Solo sus empresas, sin roles ni datos de pago | Nada |
+| Portavoces: marcados como portavoz en una asignación de una empresa **con sección sindical** | Solo sus empresas, sin roles ni datos de pago | Nada |
 | Resto | Nada | Nada |
 
 `config.php` (ver `config.example.php`):
@@ -85,7 +86,7 @@ return [
 ```
 
 - Solo cuentan las pertenencias **vigentes** a esos roles.
-- Lista vacía = solo administradores (más los delegados, en modo lectura).
+- Lista vacía = solo administradores (más los portavoces, en modo lectura).
 - La entrada de menú es visible para todos por defecto; restríngela en Menú → editar entrada.
   Las páginas comprueban los permisos igualmente.
 

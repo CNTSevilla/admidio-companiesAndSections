@@ -6,7 +6,7 @@
  *
  * Secretariat (config.php roles): sees and edits everything.
  * Delegates: see only their companies, read only, without roles or payment data.
- * Only a company WITH union section can have delegates (portavoz = delegado/a).
+ * Only a company WITH union section can have portavoces (the mro_delegado mark).
  *
  * POST ACTIONS (CSRF protected, secretariat only):
  * - update_org
@@ -260,7 +260,7 @@ $page->addJavascript('
     if (of && cb) {
         of.addEventListener("submit", function (ev) {
             var n = parseInt(of.getAttribute("data-delegados") || "0", 10);
-            if (!cb.checked && n > 0 && !confirm("Esta empresa dejará de tener sección sindical. Se retirará el cargo a " + n + " delegado/a(s). ¿Continuar?")) {
+            if (!cb.checked && n > 0 && !confirm("Esta empresa dejará de tener sección sindical. Se retirará el cargo de portavoz a " + n + " persona(s). ¿Continuar?")) {
                 ev.preventDefault();
             }
         });
@@ -283,7 +283,7 @@ ob_start();
     <?php if (!$canEdit): ?><span class="badge bg-secondary ms-2">Solo lectura</span><?php endif; ?>
 </div>
 
-<?php if (isset($_GET['saved'])): ?><div class="alert alert-success">Cambios guardados.<?php if ((int)($_GET['deleg_removed'] ?? 0) > 0): ?> Al quitar la sección sindical se ha retirado el cargo a <?php echo (int)$_GET['deleg_removed']; ?> delegado/a(s).<?php endif; ?></div><?php endif; ?>
+<?php if (isset($_GET['saved'])): ?><div class="alert alert-success">Cambios guardados.<?php if ((int)($_GET['deleg_removed'] ?? 0) > 0): ?> Al quitar la sección sindical se ha retirado el cargo de portavoz a <?php echo (int)$_GET['deleg_removed']; ?> persona(s).<?php endif; ?></div><?php endif; ?>
 <?php if ($formErrors): ?><div class="alert alert-danger"><?php echo implode('<br>', array_map('e', $formErrors)); ?></div><?php endif; ?>
 
 <div class="crm-grid">
@@ -349,17 +349,17 @@ ob_start();
                         <input type="text" name="org_nombre_seccion" maxlength="100" class="form-control" value="<?php echo e($org['org_nombre_seccion']); ?>"></div>
                     <div class="mb-2"><label class="form-label fw-bold small">Correo de la sección</label>
                         <input type="email" name="org_email_seccion" maxlength="100" class="form-control" value="<?php echo e($org['org_email_seccion']); ?>"></div>
-                    <div class="mb-2"><span class="form-label fw-bold small d-block">Delegados/as</span>
+                    <div class="mb-2"><span class="form-label fw-bold small d-block">Portavoces</span>
                         <?php if ($delegates): ?>
                             <?php foreach ($delegates as $dm): ?><span class="badge bg-danger badge-large"><i class="bi bi-megaphone"></i> <?php echo e(casUserLabel($dm)); ?></span><?php endforeach; ?>
                         <?php elseif ($hasSection): ?>
-                            <span class="text-muted small">Sin delegados/as.</span>
+                            <span class="text-muted small">Sin portavoces.</span>
                         <?php endif; ?>
-                        <?php if ($canEdit): ?><div class="form-text">Se nombran en <a href="#miembros">Miembros</a>, marcando <em>Delegado/a</em> en la asignación<?php echo $hasSection ? '' : ' (guarda primero la sección)'; ?>.</div><?php endif; ?>
+                        <?php if ($canEdit): ?><div class="form-text">Se nombran en <a href="#miembros">Miembros</a>, marcando <em>Portavoz</em> en la asignación<?php echo $hasSection ? '' : ' (guarda primero la sección)'; ?>.</div><?php endif; ?>
                     </div>
                 </div>
                 <?php if (!$hasSection): ?>
-                <p class="text-muted small mb-0" id="no_section_note"><i class="bi bi-info-circle"></i> Sin sección sindical no hay delegados/as. Las personas asignadas siguen apareciendo como afiliadas a esta empresa.</p>
+                <p class="text-muted small mb-0" id="no_section_note"><i class="bi bi-info-circle"></i> Sin sección sindical no hay portavoces. Las personas asignadas siguen apareciendo como afiliadas a esta empresa.</p>
                 <?php endif; ?>
             </div>
         </div>
@@ -480,14 +480,14 @@ ob_start();
                     <?php if ($hasSection): ?>
                     <div class="form-check mb-2">
                         <input class="form-check-input" type="checkbox" id="mro_delegado" name="mro_delegado" value="1">
-                        <label class="form-check-label small fw-bold" for="mro_delegado">Delegado/a</label>
+                        <label class="form-check-label small fw-bold" for="mro_delegado">Portavoz</label>
                     </div>
                     <?php endif; ?>
                     <div><button type="submit" class="btn btn-success">Asignar</button></div>
                 </div>
                 <div class="form-text"><?php echo $hasSection
-                    ? 'Los delegados/as pueden ver esta empresa (solo lectura).'
-                    : 'Esta empresa no tiene sección sindical: no se pueden nombrar delegados/as.'; ?></div>
+                    ? 'Los portavoces pueden ver esta empresa (solo lectura).'
+                    : 'Esta empresa no tiene sección sindical: no se pueden nombrar portavoces.'; ?></div>
             </form>
             <?php endif; ?>
 
@@ -515,7 +515,7 @@ ob_start();
                     <div class="card-body d-flex flex-column gap-2">
                         <div>
                             <span class="badge bg-secondary badge-large"><i class="bi bi-geo-alt"></i> <?php echo e($workplaces[$wid]['wkp_name'] ?? 'Sin centro'); ?></span>
-                            <?php if ($hasSection && (int)$m['mro_delegado'] === 1): ?><span class="badge bg-danger badge-large"><i class="bi bi-megaphone"></i> Delegado/a</span><?php endif; ?>
+                            <?php if ($hasSection && (int)$m['mro_delegado'] === 1): ?><span class="badge bg-danger badge-large"><i class="bi bi-megaphone"></i> Portavoz</span><?php endif; ?>
                             <?php if (!empty($m['mro_role'])): ?><span class="badge bg-dark badge-large"><?php echo e($m['mro_role']); ?></span><?php endif; ?>
                         </div>
 
@@ -541,7 +541,7 @@ ob_start();
                                 <?php if ($hasSection): ?>
                                 <div class="form-check">
                                     <input class="form-check-input" type="checkbox" id="del_<?php echo (int)$m['mro_id']; ?>" name="mro_delegado" value="1" <?php echo (int)$m['mro_delegado'] === 1 ? 'checked' : ''; ?>>
-                                    <label class="form-check-label small" for="del_<?php echo (int)$m['mro_id']; ?>">Delegado/a (ve esta empresa)</label>
+                                    <label class="form-check-label small" for="del_<?php echo (int)$m['mro_id']; ?>">Portavoz (ve esta empresa)</label>
                                 </div>
                                 <?php endif; ?>
                                 <button type="submit" class="btn btn-save btn-sm">Guardar</button>

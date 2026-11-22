@@ -149,7 +149,7 @@ function casUpgradeMembersTable(): array
     }
     if (!casColumnExists(CAS_TBL_MEMBERS, 'mro_delegado')) {
         $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_MEMBERS . ' ADD COLUMN mro_delegado TINYINT(1) NOT NULL DEFAULT 0');
-        $out[] = ['ok', 'Actualización: añadida la marca de delegado/a a las asignaciones.'];
+        $out[] = ['ok', 'Actualización: añadida la marca de portavoz a las asignaciones.'];
     }
     if (!casConstraintExists(CAS_TBL_MEMBERS, 'fk_crm_mro_wkp')) {
         $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_MEMBERS . ' ADD CONSTRAINT fk_crm_mro_wkp FOREIGN KEY (mro_wkp_id)
@@ -199,8 +199,8 @@ function casMigratePortavoz(): array
         $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_ORGS . ' DROP FOREIGN KEY `' . str_replace('`', '', $fk) . '`');
     }
     $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_ORGS . ' DROP COLUMN org_portavoz_seccion');
-    $out[] = ['ok', 'Actualización: portavoz y delegado/a pasan a ser lo mismo. '
-        . count($rows) . ' portavoz(es) convertido(s) en delegado/a de su empresa.'];
+    $out[] = ['ok', 'Actualización: el portavoz pasa a marcarse en la asignación de cada persona. '
+        . count($rows) . ' portavoz(es) migrado(s) a su empresa.'];
     return $out;
 }
 
@@ -215,7 +215,7 @@ function casCleanDelegates(): array
           WHERE m.mro_delegado = 1 AND o.org_tiene_seccion = 0'
     )->rowCount();
     return $n > 0
-        ? [['ok', 'Limpieza: retirada la marca de delegado/a a ' . $n . ' persona(s) de empresas sin sección sindical.']]
+        ? [['ok', 'Limpieza: retirada la marca de portavoz a ' . $n . ' persona(s) de empresas sin sección sindical.']]
         : [];
 }
 
@@ -295,7 +295,7 @@ ob_start();
 <p>Este instalador:</p>
 <ul>
     <li>Crea las tablas <code><?php echo e(CAS_TBL_ORGS); ?></code>, <code><?php echo e(CAS_TBL_WORKPLACES); ?></code> y <code><?php echo e(CAS_TBL_MEMBERS); ?></code>, o las actualiza si ya existían.</li>
-    <li>Si vienes de una versión anterior: convierte al <em>portavoz</em> de cada sección en delegado/a y quita la marca de delegado/a en las empresas sin sección sindical.</li>
+    <li>Si vienes de una versión anterior: pasa el <em>portavoz</em> de cada sección a la marca de portavoz de su asignación y quita esa marca en las empresas sin sección sindical.</li>
     <li>Añade la entrada de menú <strong>Empresas y secciones</strong> en Administración.</li>
     <li>Crea <code>config.php</code> si no existe.</li>
 </ul>

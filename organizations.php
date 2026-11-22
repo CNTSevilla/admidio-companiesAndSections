@@ -244,7 +244,7 @@ ob_start();
         </div>
         <?php if ($canEdit): ?>
         <div class="col-md">
-            <label class="form-label small fw-bold mb-1">Delegado/a</label>
+            <label class="form-label small fw-bold mb-1">Portavoz</label>
             <select name="filter_delegado" class="form-select form-select-sm">
                 <option value="">Todos</option>
                 <?php foreach ($delegateUsers as $u): ?>
@@ -289,7 +289,7 @@ ob_start();
                 <thead>
                     <tr>
                         <th>Nombre</th><th>CIF</th><th>Sector</th><th class="text-center">¿Sección?</th>
-                        <th>Nombre sección</th><th class="text-center">Correo sección</th><th>Delegados/as</th>
+                        <th>Nombre sección</th><th class="text-center">Correo sección</th><th>Portavoces</th>
                         <th class="text-center">Miembros</th>
                         <th class="text-center">Acciones</th>
                     </tr>
@@ -327,7 +327,7 @@ ob_start();
                                 <i class="bi bi-megaphone"></i> <?php echo e(casUserLabel($dl)); ?>
                             </a>
                             <?php endforeach; elseif ($org['org_tiene_seccion']): ?>
-                            <small class="text-danger">Sin delegado/a</small>
+                            <small class="text-danger">Sin portavoz</small>
                             <?php else: ?>-<?php endif; ?>
                         </td>
                         <td class="text-center"><span class="badge badge-custom badge-miem"><i class="bi bi-people"></i> <?php echo (int)$memberCount; ?></span></td>
