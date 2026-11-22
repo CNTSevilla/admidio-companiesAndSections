@@ -6,6 +6,7 @@
  *
  * Secretariat (config.php roles): sees and edits everything.
  * Delegates: see only their companies, read only, without roles or payment data.
+ * Only a company WITH union section can have delegates (portavoz = delegado/a).
  *
  * POST ACTIONS (CSRF protected, secretariat only):
  * - update_org
@@ -47,6 +48,11 @@ $postWkp = static function () use ($workplaces): ?int {
     $id = (int)($_POST['mro_wkp_id'] ?? 0);
     return isset($workplaces[$id]) ? $id : null;
 };
+// delegate mark from POST: only possible if the company has a union section
+$hasSection = (int)$org['org_tiene_seccion'] === 1;
+$postDelegado = static function () use ($hasSection): int {
+    return $hasSection && isset($_POST['mro_delegado']) ? 1 : 0;
+};
 
 // ---------------------------------------------------------------- POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -56,25 +62,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     switch ($action) {
         case 'update_org':
-            [$d, $formErrors] = casReadOrgForm($users);
+            [$d, $formErrors] = casReadOrgForm();
             if (!$formErrors) {
-                $gDb->queryPrepared(
-                    'UPDATE ' . CAS_TBL_ORGS . ' SET
-                        org_name = ?, org_nombre_comercial = ?, org_razon_social = ?, org_cif = ?,
-                        org_forma_juridica = ?, org_sector = ?, org_description = ?, org_email = ?,
-                        org_telefono = ?, org_web = ?, org_tiene_seccion = ?, org_nombre_seccion = ?,
-                        org_email_seccion = ?, org_portavoz_seccion = ?, org_calles = ?, org_cp = ?,
-                        org_localidad = ?, org_provincia = ?, org_usr_id_change = ?
-                      WHERE org_id = ?',
-                    [
-                        $d['org_name'], $d['org_nombre_comercial'], $d['org_razon_social'], $d['org_cif'],
-                        $d['org_forma_juridica'], $d['org_sector'], $d['org_description'], $d['org_email'],
-                        $d['org_telefono'], $d['org_web'], $d['org_tiene_seccion'], $d['org_nombre_seccion'],
-                        $d['org_email_seccion'], $d['org_portavoz_seccion'], $d['org_calles'], $d['org_cp'],
-                        $d['org_localidad'], $d['org_provincia'], (int)$gCurrentUserId, $orgId,
-                    ]
-                );
-                $back(['saved' => 1]);
+                try {
+                    $gDb->startTransaction();
+                    $gDb->queryPrepared(
+                        'UPDATE ' . CAS_TBL_ORGS . ' SET
+                            org_name = ?, org_nombre_comercial = ?, org_razon_social = ?, org_cif = ?,
+                            org_forma_juridica = ?, org_sector = ?, org_description = ?, org_email = ?,
+                            org_telefono = ?, org_web = ?, org_tiene_seccion = ?, org_nombre_seccion = ?,
+                            org_email_seccion = ?, org_calles = ?, org_cp = ?,
+                            org_localidad = ?, org_provincia = ?, org_usr_id_change = ?
+                          WHERE org_id = ?',
+                        [
+                            $d['org_name'], $d['org_nombre_comercial'], $d['org_razon_social'], $d['org_cif'],
+                            $d['org_forma_juridica'], $d['org_sector'], $d['org_description'], $d['org_email'],
+                            $d['org_telefono'], $d['org_web'], $d['org_tiene_seccion'], $d['org_nombre_seccion'],
+                            $d['org_email_seccion'], $d['org_calles'], $d['org_cp'],
+                            $d['org_localidad'], $d['org_provincia'], (int)$gCurrentUserId, $orgId,
+                        ]
+                    );
+                    $removed = 0;
+                    if (!$d['org_tiene_seccion']) {
+                        // without union section there are no delegates
+                        $removed = $gDb->queryPrepared(
+                            'UPDATE ' . CAS_TBL_MEMBERS . ' SET mro_delegado = 0 WHERE mro_org_id = ? AND mro_delegado = 1',
+                            [$orgId]
+                        )->rowCount();
+                    }
+                    $gDb->endTransaction();
+                } catch (\Throwable $e) {
+                    casFail('No se pudieron guardar los cambios.', $e);
+                }
+                $back(['saved' => 1] + ($removed ? ['deleg_removed' => $removed] : []));
             }
             $org = array_merge($org, $d);   // show the submitted values with the errors
             break;
@@ -133,7 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                      ON DUPLICATE KEY UPDATE mro_active = 1, mro_role = VALUES(mro_role),
                                              mro_wkp_id = VALUES(mro_wkp_id), mro_delegado = VALUES(mro_delegado)',
                     [casUuid(), $usrId, $orgId, mb_substr(trim((string)($_POST['mro_role'] ?? '')), 0, 100),
-                     $postWkp(), isset($_POST['mro_delegado']) ? 1 : 0, (int)$gCurrentUserId]
+                     $postWkp(), $postDelegado(), (int)$gCurrentUserId]
                 );
             }
             $back();
@@ -144,7 +164,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 'UPDATE ' . CAS_TBL_MEMBERS . ' SET mro_role = ?, mro_wkp_id = ?, mro_delegado = ?
                   WHERE mro_id = ? AND mro_org_id = ?',
                 [mb_substr(trim((string)($_POST['mro_role'] ?? '')), 0, 100), $postWkp(),
-                 isset($_POST['mro_delegado']) ? 1 : 0, (int)($_POST['mro_id'] ?? 0), $orgId]
+                 $postDelegado(), (int)($_POST['mro_id'] ?? 0), $orgId]
             );
             $back();
             break;
@@ -176,6 +196,8 @@ $members = $gDb->queryPrepared(
     [$fnId, $lnId, $orgId]
 )->fetchAll();
 $memberIds = array_map(static fn($m) => (int)$m['mro_usr_id'], $members);
+
+$delegates = array_values(array_filter($members, static fn($m) => (int)$m['mro_delegado'] === 1 && $hasSection));
 
 $perWorkplace = [];
 foreach ($members as $m) {
@@ -234,6 +256,15 @@ details > summary { cursor:pointer; }
 $page->addJavascript('
     var cb = document.getElementById("org_tiene_seccion"), f = document.getElementById("seccion_fields");
     if (cb && f) { var upd = function () { f.classList.toggle("hidden", !cb.checked); }; cb.addEventListener("change", upd); upd(); }
+    var of = document.getElementById("org_form");
+    if (of && cb) {
+        of.addEventListener("submit", function (ev) {
+            var n = parseInt(of.getAttribute("data-delegados") || "0", 10);
+            if (!cb.checked && n > 0 && !confirm("Esta empresa dejará de tener sección sindical. Se retirará el cargo a " + n + " delegado/a(s). ¿Continuar?")) {
+                ev.preventDefault();
+            }
+        });
+    }
 ', true);
 
 $selfUrl = 'organization_profile.php?org_id=' . $orgId;
@@ -252,11 +283,11 @@ ob_start();
     <?php if (!$canEdit): ?><span class="badge bg-secondary ms-2">Solo lectura</span><?php endif; ?>
 </div>
 
-<?php if (isset($_GET['saved'])): ?><div class="alert alert-success">Cambios guardados.</div><?php endif; ?>
+<?php if (isset($_GET['saved'])): ?><div class="alert alert-success">Cambios guardados.<?php if ((int)($_GET['deleg_removed'] ?? 0) > 0): ?> Al quitar la sección sindical se ha retirado el cargo a <?php echo (int)$_GET['deleg_removed']; ?> delegado/a(s).<?php endif; ?></div><?php endif; ?>
 <?php if ($formErrors): ?><div class="alert alert-danger"><?php echo implode('<br>', array_map('e', $formErrors)); ?></div><?php endif; ?>
 
 <div class="crm-grid">
-    <form method="POST" action="<?php echo e($selfUrl); ?>" style="display:contents">
+    <form method="POST" action="<?php echo e($selfUrl); ?>" style="display:contents" id="org_form" data-delegados="<?php echo count($delegates); ?>">
         <?php echo casCsrfField(); ?>
         <input type="hidden" name="action" value="update_org">
         <fieldset style="display:contents" <?php echo $canEdit ? '' : 'disabled'; ?>>
@@ -318,15 +349,18 @@ ob_start();
                         <input type="text" name="org_nombre_seccion" maxlength="100" class="form-control" value="<?php echo e($org['org_nombre_seccion']); ?>"></div>
                     <div class="mb-2"><label class="form-label fw-bold small">Correo de la sección</label>
                         <input type="email" name="org_email_seccion" maxlength="100" class="form-control" value="<?php echo e($org['org_email_seccion']); ?>"></div>
-                    <div class="mb-2"><label class="form-label fw-bold small">Portavoz de la sección</label>
-                        <select name="org_portavoz_seccion" class="form-select">
-                            <option value="">Seleccionar miembro...</option>
-                            <?php foreach ($users as $u): ?>
-                            <option value="<?php echo (int)$u['usr_id']; ?>" <?php echo (int)$org['org_portavoz_seccion'] === (int)$u['usr_id'] ? 'selected' : ''; ?>><?php echo e(casUserLabel($u)); ?></option>
-                            <?php endforeach; ?>
-                        </select>
+                    <div class="mb-2"><span class="form-label fw-bold small d-block">Delegados/as</span>
+                        <?php if ($delegates): ?>
+                            <?php foreach ($delegates as $dm): ?><span class="badge bg-danger badge-large"><i class="bi bi-megaphone"></i> <?php echo e(casUserLabel($dm)); ?></span><?php endforeach; ?>
+                        <?php elseif ($hasSection): ?>
+                            <span class="text-muted small">Sin delegados/as.</span>
+                        <?php endif; ?>
+                        <?php if ($canEdit): ?><div class="form-text">Se nombran en <a href="#miembros">Miembros</a>, marcando <em>Delegado/a</em> en la asignación<?php echo $hasSection ? '' : ' (guarda primero la sección)'; ?>.</div><?php endif; ?>
                     </div>
                 </div>
+                <?php if (!$hasSection): ?>
+                <p class="text-muted small mb-0" id="no_section_note"><i class="bi bi-info-circle"></i> Sin sección sindical no hay delegados/as. Las personas asignadas siguen apareciendo como afiliadas a esta empresa.</p>
+                <?php endif; ?>
             </div>
         </div>
         </fieldset>
@@ -443,13 +477,17 @@ ob_start();
                         <label class="form-label small fw-bold" for="mro_role">Cargo</label>
                         <input type="text" id="mro_role" name="mro_role" maxlength="100" class="form-control" placeholder="Cargo" style="width:160px;">
                     </div>
+                    <?php if ($hasSection): ?>
                     <div class="form-check mb-2">
                         <input class="form-check-input" type="checkbox" id="mro_delegado" name="mro_delegado" value="1">
                         <label class="form-check-label small fw-bold" for="mro_delegado">Delegado/a</label>
                     </div>
+                    <?php endif; ?>
                     <div><button type="submit" class="btn btn-success">Asignar</button></div>
                 </div>
-                <div class="form-text">Los delegados/as pueden ver esta empresa (solo lectura).</div>
+                <div class="form-text"><?php echo $hasSection
+                    ? 'Los delegados/as pueden ver esta empresa (solo lectura).'
+                    : 'Esta empresa no tiene sección sindical: no se pueden nombrar delegados/as.'; ?></div>
             </form>
             <?php endif; ?>
 
@@ -460,7 +498,6 @@ ob_start();
                 <?php foreach ($shownMembers as $m):
                     $uid = (int)$m['mro_usr_id'];
                     $wid = (int)$m['mro_wkp_id'];
-                    $isPortavoz = (int)$org['org_portavoz_seccion'] === $uid;
                     $pm = $sepa['methods'][$uid] ?? '';
                     $amount = $sepa['amounts'][$uid] ?? null;
                 ?>
@@ -479,8 +516,7 @@ ob_start();
                     <div class="card-body d-flex flex-column gap-2">
                         <div>
                             <span class="badge bg-secondary badge-large"><i class="bi bi-geo-alt"></i> <?php echo e($workplaces[$wid]['wkp_name'] ?? 'Sin centro'); ?></span>
-                            <?php if ((int)$m['mro_delegado'] === 1): ?><span class="badge bg-danger badge-large"><i class="bi bi-megaphone"></i> Delegado/a</span><?php endif; ?>
-                            <?php if ($isPortavoz): ?><span class="badge bg-danger badge-large"><i class="bi bi-mic"></i> Portavoz</span><?php endif; ?>
+                            <?php if ($hasSection && (int)$m['mro_delegado'] === 1): ?><span class="badge bg-danger badge-large"><i class="bi bi-megaphone"></i> Delegado/a</span><?php endif; ?>
                             <?php if (!empty($m['mro_role'])): ?><span class="badge bg-dark badge-large"><?php echo e($m['mro_role']); ?></span><?php endif; ?>
                         </div>
 
@@ -503,10 +539,12 @@ ob_start();
                                 <input type="hidden" name="mro_id" value="<?php echo (int)$m['mro_id']; ?>">
                                 <select name="mro_wkp_id" class="form-select form-select-sm"><?php echo $wkpOptions($wid ?: null); ?></select>
                                 <input type="text" name="mro_role" maxlength="100" class="form-control form-control-sm" placeholder="Cargo" value="<?php echo e($m['mro_role']); ?>">
+                                <?php if ($hasSection): ?>
                                 <div class="form-check">
                                     <input class="form-check-input" type="checkbox" id="del_<?php echo (int)$m['mro_id']; ?>" name="mro_delegado" value="1" <?php echo (int)$m['mro_delegado'] === 1 ? 'checked' : ''; ?>>
                                     <label class="form-check-label small" for="del_<?php echo (int)$m['mro_id']; ?>">Delegado/a (ve esta empresa)</label>
                                 </div>
+                                <?php endif; ?>
                                 <button type="submit" class="btn btn-save btn-sm">Guardar</button>
                             </form>
                         </details>

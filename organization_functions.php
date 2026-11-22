@@ -144,8 +144,9 @@ function casCanEdit(): bool
 }
 
 /**
- * DELEGATES (read only): ids of the companies where the current user is marked as
- * delegate/a in the assignment, or is the spokesperson (portavoz) of the section.
+ * DELEGATES (read only): ids of the companies WITH a union section where the current user
+ * is marked as delegado/a in an active assignment. A company without section has no
+ * delegates: an old mark left in the database never grants access.
  * Delegates only see their own companies and cannot change anything.
  *
  * @return int[]
@@ -163,14 +164,45 @@ function casDelegateOrgIds(): array
         return $ids = [];
     }
     $stmt = $gDb->queryPrepared(
-        'SELECT mro_org_id AS id FROM ' . CAS_TBL_MEMBERS . '
-          WHERE mro_usr_id = ? AND mro_active = 1 AND mro_delegado = 1
-         UNION
-         SELECT org_id FROM ' . CAS_TBL_ORGS . '
-          WHERE org_portavoz_seccion = ? AND org_active = 1 AND org_tiene_seccion = 1',
-        [$usrId, $usrId]
+        'SELECT m.mro_org_id AS id
+           FROM ' . CAS_TBL_MEMBERS . ' m
+     INNER JOIN ' . CAS_TBL_ORGS . ' o ON o.org_id = m.mro_org_id
+          WHERE m.mro_usr_id = ? AND m.mro_active = 1 AND m.mro_delegado = 1
+            AND o.org_active = 1 AND o.org_tiene_seccion = 1',
+        [$usrId]
     );
     return $ids = array_values(array_unique(array_map('intval', array_column($stmt->fetchAll(), 'id'))));
+}
+
+/**
+ * Active delegates of the given companies, for display: [org_id => [user row, ...]].
+ * Only companies with a union section can have delegates.
+ */
+function casDelegatesByOrg(array $orgIds): array
+{
+    global $gDb;
+    $orgIds = array_values(array_filter(array_map('intval', $orgIds)));
+    if (!$orgIds) {
+        return [];
+    }
+    [$fnId, $lnId] = casNameFieldIds();
+    $ph = implode(',', array_fill(0, count($orgIds), '?'));
+    $stmt = $gDb->queryPrepared(
+        'SELECT m.mro_org_id, u.usr_id, u.usr_uuid, fn.usd_value AS first_name, ln.usd_value AS last_name
+           FROM ' . CAS_TBL_MEMBERS . ' m
+     INNER JOIN ' . CAS_TBL_ORGS . ' o ON o.org_id = m.mro_org_id AND o.org_tiene_seccion = 1
+     INNER JOIN ' . TBL_USERS . ' u ON u.usr_id = m.mro_usr_id AND u.usr_valid = true
+      LEFT JOIN ' . TBL_USER_DATA . ' fn ON fn.usd_usr_id = u.usr_id AND fn.usd_usf_id = ?
+      LEFT JOIN ' . TBL_USER_DATA . ' ln ON ln.usd_usr_id = u.usr_id AND ln.usd_usf_id = ?
+          WHERE m.mro_org_id IN (' . $ph . ') AND m.mro_active = 1 AND m.mro_delegado = 1
+       ORDER BY ln.usd_value, fn.usd_value',
+        array_merge([$fnId, $lnId], $orgIds)
+    );
+    $out = [];
+    foreach ($stmt->fetchAll() as $row) {
+        $out[(int)$row['mro_org_id']][] = $row;
+    }
+    return $out;
 }
 
 /** True if the plugin tables exist with the current columns (installer/upgrade was run). */
@@ -180,7 +212,13 @@ function casSchemaReady(): bool
     static $ok = null;
     if ($ok === null) {
         $ok = $gDb->queryPrepared('SELECT mro_delegado, mro_wkp_id FROM ' . CAS_TBL_MEMBERS . ' LIMIT 1', [], false) !== false
-           && $gDb->queryPrepared('SELECT 1 FROM ' . CAS_TBL_WORKPLACES . ' LIMIT 1', [], false) !== false;
+           && $gDb->queryPrepared('SELECT 1 FROM ' . CAS_TBL_WORKPLACES . ' LIMIT 1', [], false) !== false
+           // the old "portavoz" column must have been migrated to delegates by install.php
+           && (int)$gDb->queryPrepared(
+                  'SELECT COUNT(*) FROM information_schema.COLUMNS
+                    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+                  [CAS_TBL_ORGS, 'org_portavoz_seccion']
+              )->fetchColumn() === 0;
     }
     return $ok;
 }
@@ -275,7 +313,7 @@ function casUserLabel(?array $u): string
  * Reads and sanitizes the organization form fields from POST.
  * Returns [data, errors]. Lengths are cut to the column sizes.
  */
-function casReadOrgForm(array $users): array
+function casReadOrgForm(): array
 {
     $text = static function (string $key, int $max): string {
         return mb_substr(trim((string)($_POST[$key] ?? '')), 0, $max);
@@ -295,7 +333,6 @@ function casReadOrgForm(array $users): array
         'org_tiene_seccion'    => isset($_POST['org_tiene_seccion']) ? 1 : 0,
         'org_nombre_seccion'   => $text('org_nombre_seccion', 100),
         'org_email_seccion'    => $text('org_email_seccion', 100),
-        'org_portavoz_seccion' => (int)($_POST['org_portavoz_seccion'] ?? 0) ?: null,
         'org_calles'           => $text('org_calles', 255),
         'org_cp'               => $text('org_cp', 10),
         'org_localidad'        => $text('org_localidad', 100),
@@ -313,13 +350,9 @@ function casReadOrgForm(array $users): array
     if ($d['org_web'] !== '' && !preg_match('#^https?://#i', $d['org_web'])) {
         $errors[] = 'La web debe empezar por http:// o https://';
     }
-    if ($d['org_portavoz_seccion'] !== null && !isset($users[$d['org_portavoz_seccion']])) {
-        $errors[] = 'El portavoz seleccionado no existe.';
-    }
     if (!$d['org_tiene_seccion']) {
         $d['org_nombre_seccion'] = '';
         $d['org_email_seccion'] = '';
-        $d['org_portavoz_seccion'] = null;
     }
     return [$d, $errors];
 }

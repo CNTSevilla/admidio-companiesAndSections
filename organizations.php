@@ -67,13 +67,17 @@ $orgs = [];
 $memberCounts = [];
 $totalOrgs = 0;
 $totalPages = 1;
-$users = casUserList();
+$delegatesByOrg = $delegateUsers = [];
 
 $searchTerm = trim((string)($_GET['search'] ?? ''));
 $filterSeccion = (string)($_GET['filter_seccion'] ?? '');
 $filterNombreSeccion = (string)($_GET['filter_nombre_seccion'] ?? '');
 $filterSector = (string)($_GET['filter_sector'] ?? '');
-$filterPortavoz = (int)($_GET['filter_portavoz'] ?? 0);
+$filterDelegado = (int)($_GET['filter_delegado'] ?? 0);
+$filterTiene = (string)($_GET['filter_tiene'] ?? '');   // '1' with section, '0' without, '' all
+if (!in_array($filterTiene, ['', '0', '1'], true)) {
+    $filterTiene = '';
+}
 $perPage = isset($_GET['per_page']) ? (int)$_GET['per_page'] : 25;
 if (!in_array($perPage, [0, 25, 50, 100], true)) {
     $perPage = 25;
@@ -117,9 +121,14 @@ if ($tablesExist) {
         $conditions[] = 'org_sector = ?';
         $params[] = $filterSector;
     }
-    if ($filterPortavoz > 0) {
-        $conditions[] = 'org_portavoz_seccion = ?';
-        $params[] = $filterPortavoz;
+    if ($filterTiene !== '') {
+        $conditions[] = 'org_tiene_seccion = ?';
+        $params[] = (int)$filterTiene;
+    }
+    if ($filterDelegado > 0) {
+        $conditions[] = 'org_tiene_seccion = 1 AND EXISTS (SELECT 1 FROM ' . CAS_TBL_MEMBERS . ' dm
+                          WHERE dm.mro_org_id = org_id AND dm.mro_usr_id = ? AND dm.mro_active = 1 AND dm.mro_delegado = 1)';
+        $params[] = $filterDelegado;
     }
     $where = implode(' AND ', $conditions);
 
@@ -134,7 +143,7 @@ if ($tablesExist) {
     }
     $orgs = $gDb->queryPrepared($sql, $params)->fetchAll();
 
-    // active members per company + payroll totals
+    // active members per company
     $orgMembers = [];
     $stmt = $gDb->queryPrepared('SELECT mro_org_id, mro_usr_id FROM ' . CAS_TBL_MEMBERS . ' WHERE mro_active = 1');
     foreach ($stmt->fetchAll() as $row) {
@@ -143,6 +152,15 @@ if ($tablesExist) {
     foreach ($orgMembers as $oid => $list) {
         $memberCounts[$oid] = count($list);
     }
+    $delegatesByOrg = casDelegatesByOrg(array_column($orgs, 'org_id'));
+    // people who are delegates somewhere, for the filter
+    $delegateUsers = [];
+    foreach ($canEdit ? casDelegatesByOrg(array_keys($orgMembers)) : [] as $list) {
+        foreach ($list as $u) {
+            $delegateUsers[(int)$u['usr_id']] = $u;
+        }
+    }
+    uasort($delegateUsers, static fn($a, $b) => strcmp(casUserLabel($a), casUserLabel($b)));
 
 }
 
@@ -170,7 +188,8 @@ $page->addHtml('
 
 $query = array_filter([
     'search' => $searchTerm, 'filter_seccion' => $filterSeccion, 'filter_nombre_seccion' => $filterNombreSeccion,
-    'filter_sector' => $filterSector, 'filter_portavoz' => $filterPortavoz ?: null, 'per_page' => $perPage,
+    'filter_sector' => $filterSector, 'filter_tiene' => $filterTiene, 'filter_delegado' => $filterDelegado ?: null,
+    'per_page' => $perPage,
 ], static fn($v) => $v !== '' && $v !== null);
 $pageUrl = static fn(int $p): string => e('organizations.php?' . http_build_query($query + ['page' => $p]));
 
@@ -193,11 +212,11 @@ ob_start();
 
 <div class="filter-card">
     <form method="GET" action="organizations.php" class="row g-2 align-items-end">
-        <div class="col-md-2">
+        <div class="col-md">
             <label class="form-label small fw-bold mb-1">Buscar</label>
             <input type="text" name="search" class="form-control form-control-sm" placeholder="Nombre, CIF..." value="<?php echo e($searchTerm); ?>">
         </div>
-        <div class="col-md-2">
+        <div class="col-md">
             <label class="form-label small fw-bold mb-1">Correo sección</label>
             <select name="filter_seccion" class="form-select form-select-sm">
                 <option value="">Todos</option>
@@ -206,7 +225,7 @@ ob_start();
                 <?php endforeach; ?>
             </select>
         </div>
-        <div class="col-md-2">
+        <div class="col-md">
             <label class="form-label small fw-bold mb-1">Nombre sección</label>
             <select name="filter_nombre_seccion" class="form-select form-select-sm">
                 <option value="">Todos</option>
@@ -215,16 +234,26 @@ ob_start();
                 <?php endforeach; ?>
             </select>
         </div>
-        <div class="col-md-2">
-            <label class="form-label small fw-bold mb-1">Portavoz sección</label>
-            <select name="filter_portavoz" class="form-select form-select-sm">
+        <div class="col-md">
+            <label class="form-label small fw-bold mb-1">¿Sección sindical?</label>
+            <select name="filter_tiene" class="form-select form-select-sm">
+                <option value="">Todas</option>
+                <option value="1" <?php echo $filterTiene === '1' ? 'selected' : ''; ?>>Con sección</option>
+                <option value="0" <?php echo $filterTiene === '0' ? 'selected' : ''; ?>>Sin sección</option>
+            </select>
+        </div>
+        <?php if ($canEdit): ?>
+        <div class="col-md">
+            <label class="form-label small fw-bold mb-1">Delegado/a</label>
+            <select name="filter_delegado" class="form-select form-select-sm">
                 <option value="">Todos</option>
-                <?php foreach ($users as $u): ?>
-                <option value="<?php echo (int)$u['usr_id']; ?>" <?php echo $filterPortavoz === (int)$u['usr_id'] ? 'selected' : ''; ?>><?php echo e(casUserLabel($u)); ?></option>
+                <?php foreach ($delegateUsers as $u): ?>
+                <option value="<?php echo (int)$u['usr_id']; ?>" <?php echo $filterDelegado === (int)$u['usr_id'] ? 'selected' : ''; ?>><?php echo e(casUserLabel($u)); ?></option>
                 <?php endforeach; ?>
             </select>
         </div>
-        <div class="col-md-2">
+        <?php endif; ?>
+        <div class="col-md">
             <label class="form-label small fw-bold mb-1">Sector</label>
             <select name="filter_sector" class="form-select form-select-sm">
                 <option value="">Todos</option>
@@ -233,10 +262,10 @@ ob_start();
                 <?php endforeach; ?>
             </select>
         </div>
-        <div class="col-md-2 d-flex gap-1">
+        <div class="col-md d-flex gap-1">
             <input type="hidden" name="per_page" value="<?php echo (int)$perPage; ?>">
             <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-search"></i></button>
-            <?php if ($searchTerm !== '' || $filterSeccion !== '' || $filterNombreSeccion !== '' || $filterSector !== '' || $filterPortavoz): ?>
+            <?php if ($searchTerm !== '' || $filterSeccion !== '' || $filterNombreSeccion !== '' || $filterSector !== '' || $filterTiene !== '' || $filterDelegado): ?>
             <a href="organizations.php" class="btn btn-secondary btn-sm"><i class="bi bi-x-lg"></i></a>
             <?php endif; ?>
         </div>
@@ -260,7 +289,7 @@ ob_start();
                 <thead>
                     <tr>
                         <th>Nombre</th><th>CIF</th><th>Sector</th><th class="text-center">¿Sección?</th>
-                        <th>Nombre sección</th><th class="text-center">Correo sección</th><th>Portavoz sección</th>
+                        <th>Nombre sección</th><th class="text-center">Correo sección</th><th>Delegados/as</th>
                         <th class="text-center">Miembros</th>
                         <th class="text-center">Acciones</th>
                     </tr>
@@ -269,7 +298,7 @@ ob_start();
                 <?php foreach ($orgs as $org):
                     $oid = (int)$org['org_id'];
                     $memberCount = $memberCounts[$oid] ?? 0;
-                    $portavoz = $users[(int)$org['org_portavoz_seccion']] ?? null;
+                    $orgDelegates = $delegatesByOrg[$oid] ?? [];
                     $profileUrl = 'organization_profile.php?org_id=' . $oid;
                 ?>
                     <tr>
@@ -284,6 +313,7 @@ ob_start();
                             <span class="badge badge-custom badge-seccion"><i class="bi bi-check-circle"></i> Sí</span>
                             <?php else: ?>
                             <span class="badge badge-custom badge-sin">No</span>
+                            <?php if ($memberCount > 0): ?><br><small class="text-success fw-bold" title="Hay afiliación pero no sección sindical">Se podría constituir</small><?php endif; ?>
                             <?php endif; ?>
                         </td>
                         <td><?php echo e($org['org_nombre_seccion'] ?: '-'); ?></td>
@@ -293,10 +323,12 @@ ob_start();
                             <?php else: ?>-<?php endif; ?>
                         </td>
                         <td>
-                            <?php if ($portavoz): ?>
-                            <a href="<?php echo e(ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.php?user_uuid=' . rawurlencode($portavoz['usr_uuid'])); ?>" class="crm-link" target="_blank" rel="noopener">
-                                <i class="bi bi-person"></i> <?php echo e(casUserLabel($portavoz)); ?>
+                            <?php if ($orgDelegates): foreach ($orgDelegates as $dl): ?>
+                            <a href="<?php echo e(ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.php?user_uuid=' . rawurlencode($dl['usr_uuid'])); ?>" class="crm-link d-block" target="_blank" rel="noopener">
+                                <i class="bi bi-megaphone"></i> <?php echo e(casUserLabel($dl)); ?>
                             </a>
+                            <?php endforeach; elseif ($org['org_tiene_seccion']): ?>
+                            <small class="text-danger">Sin delegado/a</small>
                             <?php else: ?>-<?php endif; ?>
                         </td>
                         <td class="text-center"><span class="badge badge-custom badge-miem"><i class="bi bi-people"></i> <?php echo (int)$memberCount; ?></span></td>

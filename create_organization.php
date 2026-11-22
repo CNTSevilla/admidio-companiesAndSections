@@ -16,32 +16,31 @@ casRequireEdit();
 $headline = 'Nueva empresa';
 $gNavigation->addUrl(CURRENT_URL, $headline);
 
-$users = casUserList();
 $formErrors = [];
 $d = [
     'org_name' => '', 'org_nombre_comercial' => '', 'org_razon_social' => '', 'org_cif' => '',
     'org_forma_juridica' => '', 'org_sector' => '', 'org_description' => '', 'org_email' => '',
     'org_telefono' => '', 'org_web' => '', 'org_tiene_seccion' => 0, 'org_nombre_seccion' => '',
-    'org_email_seccion' => '', 'org_portavoz_seccion' => null, 'org_calles' => '', 'org_cp' => '',
+    'org_email_seccion' => '', 'org_calles' => '', 'org_cp' => '',
     'org_localidad' => '', 'org_provincia' => '',
 ];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'create_org') {
     casCheckCsrf();
-    [$d, $formErrors] = casReadOrgForm($users);
+    [$d, $formErrors] = casReadOrgForm();
     if (!$formErrors) {
         $gDb->queryPrepared(
             'INSERT INTO ' . CAS_TBL_ORGS . ' (
                 org_uuid, org_name, org_nombre_comercial, org_razon_social, org_cif, org_forma_juridica,
                 org_sector, org_description, org_email, org_telefono, org_web, org_tiene_seccion,
-                org_nombre_seccion, org_email_seccion, org_portavoz_seccion, org_calles, org_cp,
+                org_nombre_seccion, org_email_seccion, org_calles, org_cp,
                 org_localidad, org_provincia, org_active, org_usr_id_create
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)',
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)',
             [
                 casUuid(), $d['org_name'], $d['org_nombre_comercial'], $d['org_razon_social'], $d['org_cif'],
                 $d['org_forma_juridica'], $d['org_sector'], $d['org_description'], $d['org_email'],
                 $d['org_telefono'], $d['org_web'], $d['org_tiene_seccion'], $d['org_nombre_seccion'],
-                $d['org_email_seccion'], $d['org_portavoz_seccion'], $d['org_calles'], $d['org_cp'],
+                $d['org_email_seccion'], $d['org_calles'], $d['org_cp'],
                 $d['org_localidad'], $d['org_provincia'], (int)$gCurrentUserId,
             ]
         );
@@ -114,13 +113,7 @@ ob_start();
                     <input type="text" name="org_nombre_seccion" maxlength="100" class="form-control" value="<?php echo e($d['org_nombre_seccion']); ?>"></div>
                 <div class="col-md-4"><label class="form-label form-label-custom">Correo de la sección</label>
                     <input type="email" name="org_email_seccion" maxlength="100" class="form-control" value="<?php echo e($d['org_email_seccion']); ?>"></div>
-                <div class="col-md-4"><label class="form-label form-label-custom">Portavoz de la sección</label>
-                    <select name="org_portavoz_seccion" class="form-select">
-                        <option value="">Seleccionar miembro...</option>
-                        <?php foreach ($users as $u): ?>
-                        <option value="<?php echo (int)$u['usr_id']; ?>" <?php echo (int)$d['org_portavoz_seccion'] === (int)$u['usr_id'] ? 'selected' : ''; ?>><?php echo e(casUserLabel($u)); ?></option>
-                        <?php endforeach; ?>
-                    </select></div>
+                <div class="col-12 form-text">Los delegados/as se nombran después, en la ficha de la empresa, al asignar a las personas afiliadas.</div>
             </div></div>
 
             <div class="col-12 mt-5"><h5 class="form-section-title"><i class="bi bi-geo-alt"></i> Dirección</h5></div>

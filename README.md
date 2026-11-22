@@ -4,11 +4,16 @@ Gestión de empresas, secciones sindicales y afiliación por empresa dentro de A
 
 ## Qué hace
 
-- Listado de empresas con búsqueda, filtros (sector, sección, portavoz) y paginación.
-- Ficha de empresa: datos, sede, sección sindical (nombre, correo, portavoz) y miembros asignados.
+- Listado de empresas con búsqueda, filtros (sector, con/sin sección sindical, delegado/a) y paginación.
+  Las empresas sin sección pero con afiliación se marcan como *se podría constituir*.
+- Ficha de empresa: datos, sede, sección sindical (nombre, correo, delegados/as) y miembros asignados.
 - **Centros de trabajo** por empresa (nombre, dirección, teléfono, notas). Cada miembro puede
   asignarse a un centro y la lista de miembros se puede filtrar por centro.
-- En cada asignación: cargo y marca de **delegado/a**.
+- En cada asignación: cargo y marca de **delegado/a** (portavoz y delegado/a son lo mismo).
+- **Una empresa puede existir sin sección sindical**: alguien declara dónde trabaja aunque allí no
+  haya sección. Esas empresas no pueden tener delegados/as: la casilla no aparece, el servidor la
+  ignora y una marca antigua no da acceso. Al quitar la sección a una empresa, sus delegados/as
+  pierden el cargo (la afiliación a la empresa y al centro se mantiene).
 - Para la secretaría, cada miembro muestra sus roles vigentes y, si existe el plugin SEPA, su forma de
   pago y, si paga por nómina, su **descuento mensual personal** (no hay totales por empresa).
 - Una empresa solo se puede borrar si no tiene miembros. Al borrar un centro, sus miembros siguen en
@@ -43,7 +48,9 @@ Se puede ejecutar varias veces: solo crea lo que falte.
 ### Actualizar desde una versión anterior
 
 Copia los ficheros nuevos (incluido `install.php`) y vuelve a ejecutar el instalador: añade la tabla de
-centros de trabajo y las columnas nuevas sin tocar los datos existentes. Mientras no se actualice, el
+centros de trabajo y las columnas nuevas sin tocar los datos existentes. Si vienes de una versión con
+*portavoz*, cada portavoz pasa a ser delegado/a de su empresa (asignándolo si no lo estaba) y se quita la
+marca de delegado/a en las empresas sin sección. Mientras no se actualice, el
 plugin avisa a los administradores y no deja entrar a los delegados.
 
 ### Docker
@@ -63,7 +70,7 @@ volumes:
 |---|---|---|
 | Administradores | Todas las empresas | Todo |
 | Secretaría: roles de `allowed_roles` en `config.php` | Todas las empresas, con roles y forma de pago de cada miembro | Todo |
-| Delegados/as: marcados como delegado/a en una asignación, o portavoz de una sección | Solo sus empresas, sin roles ni datos de pago | Nada |
+| Delegados/as: marcados como delegado/a en una asignación de una empresa **con sección sindical** | Solo sus empresas, sin roles ni datos de pago | Nada |
 | Resto | Nada | Nada |
 
 `config.php` (ver `config.example.php`):

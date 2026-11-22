@@ -4,7 +4,9 @@
  *
  * What it does (and nothing else):
  * 1. Creates the tables crm_organizations, crm_workplaces and crm_member_organizations
- * 2. Upgrades older installs (adds the workplace and delegate columns)
+ * 2. Upgrades older installs: adds the workplace and delegate columns, turns the old
+ *    "portavoz" of each section into a delegate and removes delegates from companies
+ *    without union section
  * 3. Adds the menu entry "Empresas y secciones" under Administration
  * 4. Creates config.php (only administrators) if it does not exist
  *
@@ -63,11 +65,8 @@ function casCreateTables(): array
             org_forma_juridica   VARCHAR(50)  DEFAULT NULL,
             org_sector           VARCHAR(100) DEFAULT NULL,
             org_email_seccion    VARCHAR(100) DEFAULT NULL,
-            org_portavoz_seccion INT UNSIGNED DEFAULT NULL,
             org_nombre_seccion   VARCHAR(100) DEFAULT NULL,
-            KEY idx_org_name (org_name),
-            CONSTRAINT fk_crm_org_portavoz FOREIGN KEY (org_portavoz_seccion)
-                REFERENCES ' . TBL_USERS . ' (usr_id) ON DELETE SET NULL
+            KEY idx_org_name (org_name)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $out[] = ['info', 'Tabla ' . CAS_TBL_ORGS . ($orgsExisted ? ' ya existía (no se ha modificado).' : ' creada.')];
 
@@ -116,7 +115,7 @@ function casCreateTables(): array
     $out[] = ['info', 'Tabla ' . CAS_TBL_MEMBERS . ($memExisted ? ' ya existía.' : ' creada.')];
 
     // --- upgrade of installs made before workplaces/delegates existed
-    $out = array_merge($out, casUpgradeMembersTable());
+    $out = array_merge($out, casUpgradeMembersTable(), casMigratePortavoz(), casCleanDelegates());
     return $out;
 }
 
@@ -157,6 +156,67 @@ function casUpgradeMembersTable(): array
                              REFERENCES ' . CAS_TBL_WORKPLACES . ' (wkp_id) ON DELETE SET NULL');
     }
     return $out;
+}
+
+/**
+ * Older versions had a "portavoz" per company besides the delegate mark. They are the same
+ * thing: the portavoz becomes a delegate of the company (assigning them if needed) and the
+ * column is removed. Companies without section lose their portavoz (it had no effect).
+ */
+function casMigratePortavoz(): array
+{
+    global $gDb, $gCurrentUserId;
+    if (!casColumnExists(CAS_TBL_ORGS, 'org_portavoz_seccion')) {
+        return [];
+    }
+    $out = [];
+    $rows = $gDb->queryPrepared(
+        'SELECT org_id, org_portavoz_seccion FROM ' . CAS_TBL_ORGS . '
+          WHERE org_tiene_seccion = 1 AND org_portavoz_seccion IS NOT NULL'
+    )->fetchAll();
+
+    $gDb->startTransaction();
+    foreach ($rows as $r) {
+        $gDb->queryPrepared(
+            'INSERT INTO ' . CAS_TBL_MEMBERS . '
+                    (mro_uuid, mro_usr_id, mro_org_id, mro_delegado, mro_active, mro_usr_id_create, mro_timestamp_create)
+             VALUES (?, ?, ?, 1, 1, ?, NOW())
+             ON DUPLICATE KEY UPDATE mro_delegado = 1, mro_active = 1',
+            [casUuid(), (int)$r['org_portavoz_seccion'], (int)$r['org_id'], (int)$gCurrentUserId]
+        );
+    }
+    $gDb->endTransaction();
+
+    // DDL commits implicitly in MySQL/MariaDB: done after the data migration
+    // drop any foreign key on the column, whatever its name (older installs differ)
+    $fks = $gDb->queryPrepared(
+        'SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
+            AND REFERENCED_TABLE_NAME IS NOT NULL',
+        [CAS_TBL_ORGS, 'org_portavoz_seccion']
+    )->fetchAll(PDO::FETCH_COLUMN);
+    foreach ($fks as $fk) {
+        $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_ORGS . ' DROP FOREIGN KEY `' . str_replace('`', '', $fk) . '`');
+    }
+    $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_ORGS . ' DROP COLUMN org_portavoz_seccion');
+    $out[] = ['ok', 'Actualización: portavoz y delegado/a pasan a ser lo mismo. '
+        . count($rows) . ' portavoz(es) convertido(s) en delegado/a de su empresa.'];
+    return $out;
+}
+
+/** A company without union section cannot have delegates: removes old marks. */
+function casCleanDelegates(): array
+{
+    global $gDb;
+    $n = $gDb->queryPrepared(
+        'UPDATE ' . CAS_TBL_MEMBERS . ' m
+     INNER JOIN ' . CAS_TBL_ORGS . ' o ON o.org_id = m.mro_org_id
+            SET m.mro_delegado = 0
+          WHERE m.mro_delegado = 1 AND o.org_tiene_seccion = 0'
+    )->rowCount();
+    return $n > 0
+        ? [['ok', 'Limpieza: retirada la marca de delegado/a a ' . $n . ' persona(s) de empresas sin sección sindical.']]
+        : [];
 }
 
 function casAddMenuItem(): array
@@ -235,6 +295,7 @@ ob_start();
 <p>Este instalador:</p>
 <ul>
     <li>Crea las tablas <code><?php echo e(CAS_TBL_ORGS); ?></code>, <code><?php echo e(CAS_TBL_WORKPLACES); ?></code> y <code><?php echo e(CAS_TBL_MEMBERS); ?></code>, o las actualiza si ya existían.</li>
+    <li>Si vienes de una versión anterior: convierte al <em>portavoz</em> de cada sección en delegado/a y quita la marca de delegado/a en las empresas sin sección sindical.</li>
     <li>Añade la entrada de menú <strong>Empresas y secciones</strong> en Administración.</li>
     <li>Crea <code>config.php</code> si no existe.</li>
 </ul>
