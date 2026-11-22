@@ -2,12 +2,15 @@
 /**
  * Companies and Sections Plugin - Company profile
  *
- * Shows and edits a company, its union section and its assigned members.
+ * Company data, union section, workplaces (centros de trabajo) and assigned members.
  *
- * POST ACTIONS (CSRF protected):
- * - update_org:    updates the company data
- * - add_member:    assigns a user to THIS company
- * - remove_member: removes an assignment of THIS company
+ * Secretariat (config.php roles): sees and edits everything.
+ * Delegates: see only their companies, read only, without roles or payment data.
+ *
+ * POST ACTIONS (CSRF protected, secretariat only):
+ * - update_org
+ * - add_workplace / update_workplace / delete_workplace
+ * - add_member / update_member / remove_member
  *
  * @package CompaniesAndSections
  */
@@ -20,77 +23,149 @@ $orgId = (int)($_GET['org_id'] ?? 0);
 if ($orgId <= 0) {
     casFail('Empresa no especificada.');
 }
+if (!casSchemaReady()) {
+    casFail('El plugin necesita actualizarse: un administrador debe ejecutar install.php.');
+}
+if (!casCanView($orgId)) {
+    casDeny(false, 'No tienes acceso a esta empresa.');
+}
+$canEdit = casCanEdit();
 
-$loadOrg = static function (int $id) use ($gDb): ?array {
-    $row = $gDb->queryPrepared('SELECT * FROM ' . CAS_TBL_ORGS . ' WHERE org_id = ? AND org_active = 1', [$id])->fetch();
-    return $row ?: null;
-};
-$org = $loadOrg($orgId);
+$org = $gDb->queryPrepared('SELECT * FROM ' . CAS_TBL_ORGS . ' WHERE org_id = ? AND org_active = 1', [$orgId])->fetch();
 if (!$org) {
     casFail('Empresa no encontrada.');
 }
 
 $users = casUserList();
+$workplaces = casWorkplaces($orgId);
 $formErrors = [];
+$back = static function (array $extra = []) use ($orgId): void {
+    casRedirect('organization_profile.php', ['org_id' => $orgId] + $extra);
+};
+// a workplace id from POST, only if it belongs to THIS company (else null)
+$postWkp = static function () use ($workplaces): ?int {
+    $id = (int)($_POST['mro_wkp_id'] ?? 0);
+    return isset($workplaces[$id]) ? $id : null;
+};
 
 // ---------------------------------------------------------------- POST actions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     casCheckCsrf();
+    casRequireEdit();
     $action = (string)($_POST['action'] ?? '');
 
-    if ($action === 'update_org') {
-        [$d, $formErrors] = casReadOrgForm($users);
-        if (!$formErrors) {
+    switch ($action) {
+        case 'update_org':
+            [$d, $formErrors] = casReadOrgForm($users);
+            if (!$formErrors) {
+                $gDb->queryPrepared(
+                    'UPDATE ' . CAS_TBL_ORGS . ' SET
+                        org_name = ?, org_nombre_comercial = ?, org_razon_social = ?, org_cif = ?,
+                        org_forma_juridica = ?, org_sector = ?, org_description = ?, org_email = ?,
+                        org_telefono = ?, org_web = ?, org_tiene_seccion = ?, org_nombre_seccion = ?,
+                        org_email_seccion = ?, org_portavoz_seccion = ?, org_calles = ?, org_cp = ?,
+                        org_localidad = ?, org_provincia = ?, org_usr_id_change = ?
+                      WHERE org_id = ?',
+                    [
+                        $d['org_name'], $d['org_nombre_comercial'], $d['org_razon_social'], $d['org_cif'],
+                        $d['org_forma_juridica'], $d['org_sector'], $d['org_description'], $d['org_email'],
+                        $d['org_telefono'], $d['org_web'], $d['org_tiene_seccion'], $d['org_nombre_seccion'],
+                        $d['org_email_seccion'], $d['org_portavoz_seccion'], $d['org_calles'], $d['org_cp'],
+                        $d['org_localidad'], $d['org_provincia'], (int)$gCurrentUserId, $orgId,
+                    ]
+                );
+                $back(['saved' => 1]);
+            }
+            $org = array_merge($org, $d);   // show the submitted values with the errors
+            break;
+
+        case 'add_workplace':
+        case 'update_workplace':
+            [$w, $formErrors] = casReadWorkplaceForm();
+            $wkpId = (int)($_POST['wkp_id'] ?? 0);
+            if ($action === 'update_workplace' && !isset($workplaces[$wkpId])) {
+                $back();
+            }
+            foreach ($workplaces as $id => $existing) {
+                if ($id !== $wkpId && mb_strtolower($existing['wkp_name']) === mb_strtolower($w['wkp_name'])) {
+                    $formErrors[] = 'Ya existe un centro de trabajo con ese nombre en esta empresa.';
+                }
+            }
+            if (!$formErrors) {
+                if ($action === 'add_workplace') {
+                    $gDb->queryPrepared(
+                        'INSERT INTO ' . CAS_TBL_WORKPLACES . ' (wkp_uuid, wkp_org_id, wkp_name, wkp_calles, wkp_cp,
+                                wkp_localidad, wkp_provincia, wkp_telefono, wkp_notas, wkp_usr_id_create)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                        [casUuid(), $orgId, $w['wkp_name'], $w['wkp_calles'], $w['wkp_cp'], $w['wkp_localidad'],
+                         $w['wkp_provincia'], $w['wkp_telefono'], $w['wkp_notas'], (int)$gCurrentUserId]
+                    );
+                } else {
+                    $gDb->queryPrepared(
+                        'UPDATE ' . CAS_TBL_WORKPLACES . ' SET wkp_name = ?, wkp_calles = ?, wkp_cp = ?, wkp_localidad = ?,
+                                wkp_provincia = ?, wkp_telefono = ?, wkp_notas = ?
+                          WHERE wkp_id = ? AND wkp_org_id = ?',
+                        [$w['wkp_name'], $w['wkp_calles'], $w['wkp_cp'], $w['wkp_localidad'], $w['wkp_provincia'],
+                         $w['wkp_telefono'], $w['wkp_notas'], $wkpId, $orgId]
+                    );
+                }
+                $back();
+            }
+            break;
+
+        case 'delete_workplace':
+            // members of the workplace stay in the company, without workplace (FK ON DELETE SET NULL)
             $gDb->queryPrepared(
-                'UPDATE ' . CAS_TBL_ORGS . ' SET
-                    org_name = ?, org_nombre_comercial = ?, org_razon_social = ?, org_cif = ?,
-                    org_forma_juridica = ?, org_sector = ?, org_description = ?, org_email = ?,
-                    org_telefono = ?, org_web = ?, org_tiene_seccion = ?, org_nombre_seccion = ?,
-                    org_email_seccion = ?, org_portavoz_seccion = ?, org_calles = ?, org_cp = ?,
-                    org_localidad = ?, org_provincia = ?, org_usr_id_change = ?
-                  WHERE org_id = ?',
-                [
-                    $d['org_name'], $d['org_nombre_comercial'], $d['org_razon_social'], $d['org_cif'],
-                    $d['org_forma_juridica'], $d['org_sector'], $d['org_description'], $d['org_email'],
-                    $d['org_telefono'], $d['org_web'], $d['org_tiene_seccion'], $d['org_nombre_seccion'],
-                    $d['org_email_seccion'], $d['org_portavoz_seccion'], $d['org_calles'], $d['org_cp'],
-                    $d['org_localidad'], $d['org_provincia'], (int)$gCurrentUserId, $orgId,
-                ]
+                'DELETE FROM ' . CAS_TBL_WORKPLACES . ' WHERE wkp_id = ? AND wkp_org_id = ?',
+                [(int)($_POST['wkp_id'] ?? 0), $orgId]
             );
-            casRedirect('organization_profile.php', ['org_id' => $orgId, 'saved' => 1]);
-        }
-        // on errors fall through and show the form with the submitted values
-        $org = array_merge($org, $d);
-    } elseif ($action === 'add_member') {
-        $usrId = (int)($_POST['usr_id'] ?? 0);
-        $role = mb_substr(trim((string)($_POST['mro_role'] ?? '')), 0, 100);
-        if (isset($users[$usrId])) {
-            // reactivates an old assignment or creates a new one (unique key usr+org)
+            $back();
+            break;
+
+        case 'add_member':
+            $usrId = (int)($_POST['usr_id'] ?? 0);
+            if (isset($users[$usrId])) {
+                $gDb->queryPrepared(
+                    'INSERT INTO ' . CAS_TBL_MEMBERS . '
+                            (mro_uuid, mro_usr_id, mro_org_id, mro_role, mro_wkp_id, mro_delegado,
+                             mro_active, mro_usr_id_create, mro_timestamp_create)
+                     VALUES (?, ?, ?, ?, ?, ?, 1, ?, NOW())
+                     ON DUPLICATE KEY UPDATE mro_active = 1, mro_role = VALUES(mro_role),
+                                             mro_wkp_id = VALUES(mro_wkp_id), mro_delegado = VALUES(mro_delegado)',
+                    [casUuid(), $usrId, $orgId, mb_substr(trim((string)($_POST['mro_role'] ?? '')), 0, 100),
+                     $postWkp(), isset($_POST['mro_delegado']) ? 1 : 0, (int)$gCurrentUserId]
+                );
+            }
+            $back();
+            break;
+
+        case 'update_member':
             $gDb->queryPrepared(
-                'INSERT INTO ' . CAS_TBL_MEMBERS . '
-                        (mro_uuid, mro_usr_id, mro_org_id, mro_role, mro_active, mro_usr_id_create, mro_timestamp_create)
-                 VALUES (?, ?, ?, ?, 1, ?, NOW())
-                 ON DUPLICATE KEY UPDATE mro_active = 1, mro_role = VALUES(mro_role)',
-                [casUuid(), $usrId, $orgId, $role, (int)$gCurrentUserId]
+                'UPDATE ' . CAS_TBL_MEMBERS . ' SET mro_role = ?, mro_wkp_id = ?, mro_delegado = ?
+                  WHERE mro_id = ? AND mro_org_id = ?',
+                [mb_substr(trim((string)($_POST['mro_role'] ?? '')), 0, 100), $postWkp(),
+                 isset($_POST['mro_delegado']) ? 1 : 0, (int)($_POST['mro_id'] ?? 0), $orgId]
             );
-        }
-        casRedirect('organization_profile.php', ['org_id' => $orgId]);
-    } elseif ($action === 'remove_member') {
-        // only assignments of THIS company can be removed from this page
-        $gDb->queryPrepared(
-            'DELETE FROM ' . CAS_TBL_MEMBERS . ' WHERE mro_id = ? AND mro_org_id = ?',
-            [(int)($_POST['mro_id'] ?? 0), $orgId]
-        );
-        casRedirect('organization_profile.php', ['org_id' => $orgId]);
-    } else {
-        casRedirect('organization_profile.php', ['org_id' => $orgId]);
+            $back();
+            break;
+
+        case 'remove_member':
+            $gDb->queryPrepared(
+                'DELETE FROM ' . CAS_TBL_MEMBERS . ' WHERE mro_id = ? AND mro_org_id = ?',
+                [(int)($_POST['mro_id'] ?? 0), $orgId]
+            );
+            $back();
+            break;
+
+        default:
+            $back();
     }
 }
 
 // ---------------------------------------------------------------- data for the page
 [$fnId, $lnId] = casNameFieldIds();
 $members = $gDb->queryPrepared(
-    'SELECT m.mro_id, m.mro_usr_id, m.mro_role, u.usr_uuid,
+    'SELECT m.mro_id, m.mro_usr_id, m.mro_role, m.mro_wkp_id, m.mro_delegado, u.usr_uuid,
             fn.usd_value AS first_name, ln.usd_value AS last_name
        FROM ' . CAS_TBL_MEMBERS . ' m
  INNER JOIN ' . TBL_USERS . ' u ON u.usr_id = m.mro_usr_id
@@ -102,9 +177,20 @@ $members = $gDb->queryPrepared(
 )->fetchAll();
 $memberIds = array_map(static fn($m) => (int)$m['mro_usr_id'], $members);
 
-// current (not ended) roles of the members of THIS company in the current organization
+$perWorkplace = [];
+foreach ($members as $m) {
+    $perWorkplace[(int)$m['mro_wkp_id']] = ($perWorkplace[(int)$m['mro_wkp_id']] ?? 0) + 1;
+}
+
+// filter by workplace: ?wkp=ID, ?wkp=0 = without workplace
+$filterWkp = isset($_GET['wkp']) && $_GET['wkp'] !== '' ? (int)$_GET['wkp'] : null;
+$shownMembers = $filterWkp === null ? $members
+    : array_values(array_filter($members, static fn($m) => (int)$m['mro_wkp_id'] === $filterWkp));
+
+// roles and payment data: secretariat only
 $userRoles = [];
-if ($memberIds) {
+$sepa = ['enabled' => false, 'amounts' => [], 'methods' => []];
+if ($canEdit && $memberIds) {
     $ph = implode(',', array_fill(0, count($memberIds), '?'));
     $stmt = $gDb->queryPrepared(
         'SELECT mem.mem_usr_id, rol.rol_name
@@ -120,66 +206,60 @@ if ($memberIds) {
     foreach ($stmt->fetchAll() as $row) {
         $userRoles[(int)$row['mem_usr_id']][] = $row['rol_name'];
     }
+    $sepa = casSepaInfo($memberIds);
 }
-
-$sepa = casSepaInfo($memberIds);
-$stats = ['total' => count($members), 'nomina' => count($sepa['amounts']), 'total_nomina' => array_sum($sepa['amounts'])];
 
 $gNavigation->addUrl(CURRENT_URL, $org['org_name']);
 $page = \Admidio\UI\Presenter\PagePresenter::withHtmlIDAndHeadline('companies-and-sections-profile', e($org['org_name']));
 $page->addHtml('
 <style>
-:root { --cnt-red:#DA291C; --cnt-black:#4a4a4a; --cnt-black-light:#2d2d2d; --cnt-green:#198754; --cnt-blue:#0d6efd; }
-.stat-card { border-radius:10px; padding:15px; text-align:center; color:#fff; }
-.stat-card-red { background:linear-gradient(135deg,var(--cnt-red) 0%,#c41e3a 100%); }
-.stat-card-blue { background:linear-gradient(135deg,var(--cnt-blue) 0%,#0a58ca 100%); }
-.stat-card-green { background:linear-gradient(135deg,var(--cnt-green) 0%,#157347 100%); }
-.stat-number { font-size:2rem; font-weight:700; } .stat-label { font-size:1rem; opacity:.9; font-weight:600; }
+:root { --cnt-red:#DA291C; --cnt-black:#4a4a4a; --cnt-black-light:#2d2d2d; --cnt-green:#198754; }
 .btn-save { background:var(--cnt-red); border-color:var(--cnt-red); color:#fff; } .btn-save:hover { background:#c41e3a; color:#fff; }
 .card-header-custom { background:var(--cnt-black-light); color:#fff; font-weight:600; }
 .crm-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; }
-.crm-grid .card-miembros { grid-column:1 / -1; }
+.crm-grid .span-all { grid-column:1 / -1; }
 @media (max-width:1199px) { .crm-grid { grid-template-columns:1fr; } }
 .members-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; align-items:start; }
 @media (max-width:991px) { .members-grid { grid-template-columns:1fr; } }
 .crm-member-card { border-left:5px solid var(--cnt-red); }
 .crm-member-card .card-header { background:var(--cnt-black-light); color:#fff; }
-.badge-large { padding:6px 12px; font-size:.9rem; margin:0 4px 4px 0; }
-.btn-remove-member { background:var(--cnt-red); border:none; color:#fff; border-radius:50%; width:32px; height:32px; display:flex; align-items:center; justify-content:center; padding:0; }
-.btn-remove-member:hover { background:#c41e3a; color:#fff; }
+.badge-large { padding:6px 12px; font-size:.85rem; margin:0 4px 4px 0; }
+.btn-remove { background:var(--cnt-red); border:none; color:#fff; border-radius:50%; width:30px; height:30px; display:inline-flex; align-items:center; justify-content:center; padding:0; }
+.btn-remove:hover { background:#c41e3a; color:#fff; }
 #seccion_fields.hidden { display:none; }
+.wkp-row { border-bottom:1px solid #eee; padding:.5rem 0; }
+.wkp-row:last-child { border-bottom:none; }
+details > summary { cursor:pointer; }
 </style>');
 $page->addJavascript('
     var cb = document.getElementById("org_tiene_seccion"), f = document.getElementById("seccion_fields");
-    var upd = function () { f.classList.toggle("hidden", !cb.checked); };
-    cb.addEventListener("change", upd); upd();
+    if (cb && f) { var upd = function () { f.classList.toggle("hidden", !cb.checked); }; cb.addEventListener("change", upd); upd(); }
 ', true);
+
+$selfUrl = 'organization_profile.php?org_id=' . $orgId;
+$wkpOptions = static function (?int $selected) use ($workplaces): string {
+    $html = '<option value="">Sin centro asignado</option>';
+    foreach ($workplaces as $id => $w) {
+        $html .= '<option value="' . $id . '"' . ($selected === $id ? ' selected' : '') . '>' . e($w['wkp_name']) . '</option>';
+    }
+    return $html;
+};
 
 ob_start();
 ?>
 <div class="mb-3">
     <a href="organizations.php" class="btn btn-secondary"><i class="bi bi-arrow-left"></i> Volver a empresas</a>
+    <?php if (!$canEdit): ?><span class="badge bg-secondary ms-2">Solo lectura</span><?php endif; ?>
 </div>
 
-<?php if (isset($_GET['saved'])): ?>
-<div class="alert alert-success">Cambios guardados.</div>
-<?php endif; ?>
-<?php if ($formErrors): ?>
-<div class="alert alert-danger"><?php echo implode('<br>', array_map('e', $formErrors)); ?></div>
-<?php endif; ?>
-
-<?php if ($sepa['enabled']): ?>
-<div class="row mb-4">
-    <div class="col-md-4"><div class="stat-card stat-card-blue"><div class="stat-number"><?php echo (int)$stats['total']; ?></div><div class="stat-label">Total miembros</div></div></div>
-    <div class="col-md-4"><div class="stat-card stat-card-red"><div class="stat-number"><?php echo (int)$stats['nomina']; ?></div><div class="stat-label">Pago por nómina</div></div></div>
-    <div class="col-md-4"><div class="stat-card stat-card-green"><div class="stat-number"><?php echo e(number_format((float)$stats['total_nomina'], 2, ',', '.')); ?> €</div><div class="stat-label">Total a percibir / mes</div></div></div>
-</div>
-<?php endif; ?>
+<?php if (isset($_GET['saved'])): ?><div class="alert alert-success">Cambios guardados.</div><?php endif; ?>
+<?php if ($formErrors): ?><div class="alert alert-danger"><?php echo implode('<br>', array_map('e', $formErrors)); ?></div><?php endif; ?>
 
 <div class="crm-grid">
-    <form method="POST" action="organization_profile.php?org_id=<?php echo $orgId; ?>" id="updateOrgForm" class="contents" style="display:contents">
+    <form method="POST" action="<?php echo e($selfUrl); ?>" style="display:contents">
         <?php echo casCsrfField(); ?>
         <input type="hidden" name="action" value="update_org">
+        <fieldset style="display:contents" <?php echo $canEdit ? '' : 'disabled'; ?>>
 
         <div class="card">
             <div class="card-header card-header-custom"><i class="bi bi-building"></i> Datos de la empresa</div>
@@ -206,12 +286,12 @@ ob_start();
                     <input type="url" name="org_web" maxlength="255" class="form-control" placeholder="https://..." value="<?php echo e($org['org_web']); ?>"></div>
                 <div class="mb-2"><label class="form-label fw-bold small">Descripción</label>
                     <textarea name="org_description" class="form-control" rows="2"><?php echo e($org['org_description']); ?></textarea></div>
-                <button type="submit" class="btn btn-save mt-3"><i class="bi bi-save"></i> Guardar cambios</button>
+                <?php if ($canEdit): ?><button type="submit" class="btn btn-save mt-3"><i class="bi bi-save"></i> Guardar cambios</button><?php endif; ?>
             </div>
         </div>
 
         <div class="card">
-            <div class="card-header card-header-custom"><i class="bi bi-geo-alt"></i> Dirección</div>
+            <div class="card-header card-header-custom"><i class="bi bi-geo-alt"></i> Dirección (sede)</div>
             <div class="card-body">
                 <div class="mb-2"><label class="form-label fw-bold small">Calle</label>
                     <input type="text" name="org_calles" maxlength="255" class="form-control" value="<?php echo e($org['org_calles']); ?>"></div>
@@ -249,12 +329,100 @@ ob_start();
                 </div>
             </div>
         </div>
+        </fieldset>
     </form>
 
-    <div class="card card-miembros">
-        <div class="card-header card-header-custom"><i class="bi bi-people"></i> Miembros (<?php echo (int)$stats['total']; ?>)</div>
+    <!-- ===================== Workplaces ===================== -->
+    <div class="card span-all">
+        <div class="card-header card-header-custom d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-geo"></i> Centros de trabajo (<?php echo count($workplaces); ?>)</span>
+        </div>
         <div class="card-body">
-            <form method="POST" action="organization_profile.php?org_id=<?php echo $orgId; ?>" class="mb-4">
+            <?php if (!$workplaces): ?>
+            <p class="text-muted mb-3">Esta empresa no tiene centros de trabajo registrados.</p>
+            <?php endif; ?>
+
+            <?php foreach ($workplaces as $id => $w):
+                $addr = implode(', ', array_filter([$w['wkp_calles'], trim($w['wkp_cp'] . ' ' . $w['wkp_localidad']), $w['wkp_provincia']]));
+            ?>
+            <div class="wkp-row">
+                <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+                    <div>
+                        <a class="fw-bold" href="<?php echo e($selfUrl . '&wkp=' . $id); ?>#miembros"><i class="bi bi-geo-alt"></i> <?php echo e($w['wkp_name']); ?></a>
+                        <span class="badge bg-dark ms-1"><?php echo (int)($perWorkplace[$id] ?? 0); ?> miembros</span>
+                        <?php if ($addr !== ''): ?><div class="small text-muted"><?php echo e($addr); ?></div><?php endif; ?>
+                        <?php if (!empty($w['wkp_telefono'])): ?><div class="small"><i class="bi bi-telephone"></i> <?php echo e($w['wkp_telefono']); ?></div><?php endif; ?>
+                        <?php if (!empty($w['wkp_notas'])): ?><div class="small fst-italic"><?php echo nl2br(e($w['wkp_notas'])); ?></div><?php endif; ?>
+                    </div>
+                    <?php if ($canEdit): ?>
+                    <form method="POST" action="<?php echo e($selfUrl); ?>" onsubmit="return confirm('¿Eliminar este centro? Sus miembros seguirán en la empresa, sin centro.');">
+                        <?php echo casCsrfField(); ?>
+                        <input type="hidden" name="action" value="delete_workplace">
+                        <input type="hidden" name="wkp_id" value="<?php echo $id; ?>">
+                        <button type="submit" class="btn-remove" title="Eliminar centro"><i class="bi bi-trash"></i></button>
+                    </form>
+                    <?php endif; ?>
+                </div>
+                <?php if ($canEdit): ?>
+                <details class="mt-2"><summary class="small">Editar centro</summary>
+                    <form method="POST" action="<?php echo e($selfUrl); ?>" class="row g-2 mt-1">
+                        <?php echo casCsrfField(); ?>
+                        <input type="hidden" name="action" value="update_workplace">
+                        <input type="hidden" name="wkp_id" value="<?php echo $id; ?>">
+                        <div class="col-md-3"><input type="text" name="wkp_name" maxlength="100" class="form-control form-control-sm" required placeholder="Nombre" value="<?php echo e($w['wkp_name']); ?>"></div>
+                        <div class="col-md-3"><input type="text" name="wkp_calles" maxlength="255" class="form-control form-control-sm" placeholder="Calle" value="<?php echo e($w['wkp_calles']); ?>"></div>
+                        <div class="col-md-1"><input type="text" name="wkp_cp" maxlength="10" class="form-control form-control-sm" placeholder="CP" value="<?php echo e($w['wkp_cp']); ?>"></div>
+                        <div class="col-md-2"><input type="text" name="wkp_localidad" maxlength="100" class="form-control form-control-sm" placeholder="Localidad" value="<?php echo e($w['wkp_localidad']); ?>"></div>
+                        <div class="col-md-2"><input type="text" name="wkp_provincia" maxlength="100" class="form-control form-control-sm" placeholder="Provincia" value="<?php echo e($w['wkp_provincia']); ?>"></div>
+                        <div class="col-md-1"><input type="tel" name="wkp_telefono" maxlength="20" class="form-control form-control-sm" placeholder="Teléfono" value="<?php echo e($w['wkp_telefono']); ?>"></div>
+                        <div class="col-md-10"><input type="text" name="wkp_notas" maxlength="2000" class="form-control form-control-sm" placeholder="Notas (turnos, horario, persona de contacto...)" value="<?php echo e($w['wkp_notas']); ?>"></div>
+                        <div class="col-md-2"><button type="submit" class="btn btn-save btn-sm w-100">Guardar</button></div>
+                    </form>
+                </details>
+                <?php endif; ?>
+            </div>
+            <?php endforeach; ?>
+
+            <?php if ($canEdit): ?>
+            <details class="mt-3" <?php echo $workplaces ? '' : 'open'; ?>><summary class="fw-bold"><i class="bi bi-plus-circle"></i> Añadir centro de trabajo</summary>
+                <form method="POST" action="<?php echo e($selfUrl); ?>" class="row g-2 mt-1">
+                    <?php echo casCsrfField(); ?>
+                    <input type="hidden" name="action" value="add_workplace">
+                    <div class="col-md-3"><input type="text" name="wkp_name" maxlength="100" class="form-control form-control-sm" required placeholder="Nombre (p. ej. Centro Aeropuerto)"></div>
+                    <div class="col-md-3"><input type="text" name="wkp_calles" maxlength="255" class="form-control form-control-sm" placeholder="Calle"></div>
+                    <div class="col-md-1"><input type="text" name="wkp_cp" maxlength="10" class="form-control form-control-sm" placeholder="CP"></div>
+                    <div class="col-md-2"><input type="text" name="wkp_localidad" maxlength="100" class="form-control form-control-sm" placeholder="Localidad"></div>
+                    <div class="col-md-2"><input type="text" name="wkp_provincia" maxlength="100" class="form-control form-control-sm" placeholder="Provincia"></div>
+                    <div class="col-md-1"><input type="tel" name="wkp_telefono" maxlength="20" class="form-control form-control-sm" placeholder="Teléfono"></div>
+                    <div class="col-md-10"><input type="text" name="wkp_notas" maxlength="2000" class="form-control form-control-sm" placeholder="Notas (turnos, horario, persona de contacto...)"></div>
+                    <div class="col-md-2"><button type="submit" class="btn btn-success btn-sm w-100">Añadir</button></div>
+                </form>
+            </details>
+            <?php endif; ?>
+        </div>
+    </div>
+
+    <!-- ===================== Members ===================== -->
+    <div class="card span-all" id="miembros">
+        <div class="card-header card-header-custom d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-people"></i> Miembros (<?php echo count($members); ?>)</span>
+            <?php if ($workplaces): ?>
+            <form method="GET" action="organization_profile.php" class="d-flex gap-2 align-items-center">
+                <input type="hidden" name="org_id" value="<?php echo $orgId; ?>">
+                <label class="small mb-0" for="wkp_filter">Centro:</label>
+                <select id="wkp_filter" name="wkp" class="form-select form-select-sm" onchange="this.form.submit()">
+                    <option value="" <?php echo $filterWkp === null ? 'selected' : ''; ?>>Todos</option>
+                    <?php foreach ($workplaces as $id => $w): ?>
+                    <option value="<?php echo $id; ?>" <?php echo $filterWkp === $id ? 'selected' : ''; ?>><?php echo e($w['wkp_name']); ?> (<?php echo (int)($perWorkplace[$id] ?? 0); ?>)</option>
+                    <?php endforeach; ?>
+                    <option value="0" <?php echo $filterWkp === 0 ? 'selected' : ''; ?>>Sin centro (<?php echo (int)($perWorkplace[0] ?? 0); ?>)</option>
+                </select>
+            </form>
+            <?php endif; ?>
+        </div>
+        <div class="card-body">
+            <?php if ($canEdit): ?>
+            <form method="POST" action="<?php echo e($selfUrl); ?>" class="mb-4">
                 <?php echo casCsrfField(); ?>
                 <input type="hidden" name="action" value="add_member">
                 <div class="d-flex gap-2 align-items-end flex-wrap">
@@ -268,45 +436,80 @@ ob_start();
                         </select>
                     </div>
                     <div>
+                        <label class="form-label small fw-bold" for="mro_wkp_id">Centro de trabajo</label>
+                        <select id="mro_wkp_id" name="mro_wkp_id" class="form-select"><?php echo $wkpOptions(null); ?></select>
+                    </div>
+                    <div>
                         <label class="form-label small fw-bold" for="mro_role">Cargo</label>
-                        <input type="text" id="mro_role" name="mro_role" maxlength="100" class="form-control" placeholder="Cargo" style="width:180px;">
+                        <input type="text" id="mro_role" name="mro_role" maxlength="100" class="form-control" placeholder="Cargo" style="width:160px;">
+                    </div>
+                    <div class="form-check mb-2">
+                        <input class="form-check-input" type="checkbox" id="mro_delegado" name="mro_delegado" value="1">
+                        <label class="form-check-label small fw-bold" for="mro_delegado">Delegado/a</label>
                     </div>
                     <div><button type="submit" class="btn btn-success">Asignar</button></div>
                 </div>
+                <div class="form-text">Los delegados/as pueden ver esta empresa (solo lectura).</div>
             </form>
+            <?php endif; ?>
 
-            <?php if (!$members): ?>
-            <p class="text-muted mt-4 ms-3">No hay miembros asignados a esta empresa.</p>
+            <?php if (!$shownMembers): ?>
+            <p class="text-muted mt-4 ms-3">No hay miembros<?php echo $filterWkp !== null ? ' en este centro' : ' asignados a esta empresa'; ?>.</p>
             <?php else: ?>
-            <div class="members-grid mt-4">
-                <?php foreach ($members as $m):
+            <div class="members-grid mt-2">
+                <?php foreach ($shownMembers as $m):
                     $uid = (int)$m['mro_usr_id'];
+                    $wid = (int)$m['mro_wkp_id'];
+                    $isPortavoz = (int)$org['org_portavoz_seccion'] === $uid;
                     $pm = $sepa['methods'][$uid] ?? '';
+                    $amount = $sepa['amounts'][$uid] ?? null;
                 ?>
                 <div class="crm-member-card card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <a class="fw-bold text-white" href="<?php echo e(ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.php?user_uuid=' . rawurlencode($m['usr_uuid'])); ?>">
-                            <?php echo e(casUserLabel($m)); ?>
-                        </a>
-                        <form method="POST" action="organization_profile.php?org_id=<?php echo $orgId; ?>" class="mb-0" onsubmit="return confirm('¿Quitar a este miembro de la empresa?');">
+                        <a class="fw-bold text-white" href="<?php echo e(ADMIDIO_URL . FOLDER_MODULES . '/profile/profile.php?user_uuid=' . rawurlencode($m['usr_uuid'])); ?>"><?php echo e(casUserLabel($m)); ?></a>
+                        <?php if ($canEdit): ?>
+                        <form method="POST" action="<?php echo e($selfUrl); ?>" class="mb-0" onsubmit="return confirm('¿Quitar a este miembro de la empresa?');">
                             <?php echo casCsrfField(); ?>
                             <input type="hidden" name="action" value="remove_member">
                             <input type="hidden" name="mro_id" value="<?php echo (int)$m['mro_id']; ?>">
-                            <button type="submit" class="btn btn-remove-member" title="Quitar"><i class="bi bi-trash"></i></button>
+                            <button type="submit" class="btn-remove" title="Quitar"><i class="bi bi-trash"></i></button>
                         </form>
+                        <?php endif; ?>
                     </div>
                     <div class="card-body d-flex flex-column gap-2">
-                        <?php if (!empty($m['mro_role'])): ?>
-                        <div><small class="text-muted fw-bold text-uppercase">Cargo</small>
-                            <div class="mt-1"><span class="badge bg-danger badge-large"><?php echo e($m['mro_role']); ?></span></div></div>
-                        <?php endif; ?>
-                        <?php if (!empty($userRoles[$uid])): ?>
+                        <div>
+                            <span class="badge bg-secondary badge-large"><i class="bi bi-geo-alt"></i> <?php echo e($workplaces[$wid]['wkp_name'] ?? 'Sin centro'); ?></span>
+                            <?php if ((int)$m['mro_delegado'] === 1): ?><span class="badge bg-danger badge-large"><i class="bi bi-megaphone"></i> Delegado/a</span><?php endif; ?>
+                            <?php if ($isPortavoz): ?><span class="badge bg-danger badge-large"><i class="bi bi-mic"></i> Portavoz</span><?php endif; ?>
+                            <?php if (!empty($m['mro_role'])): ?><span class="badge bg-dark badge-large"><?php echo e($m['mro_role']); ?></span><?php endif; ?>
+                        </div>
+
+                        <?php if ($canEdit && !empty($userRoles[$uid])): ?>
                         <div><small class="text-muted fw-bold text-uppercase">Roles</small>
-                            <div class="mt-1"><?php foreach ($userRoles[$uid] as $r): ?><span class="badge bg-dark badge-large"><?php echo e($r); ?></span><?php endforeach; ?></div></div>
+                            <div class="mt-1"><?php foreach ($userRoles[$uid] as $r): ?><span class="badge bg-light text-dark border badge-large"><?php echo e($r); ?></span><?php endforeach; ?></div></div>
                         <?php endif; ?>
-                        <?php if ($pm !== ''): ?>
+
+                        <?php if ($canEdit && $pm !== ''): ?>
                         <div><small class="text-muted fw-bold text-uppercase">Forma de pago</small>
-                            <div class="mt-1"><span class="badge bg-success badge-large"><?php echo e($pm); ?></span></div></div>
+                            <div class="mt-1"><span class="badge bg-success badge-large"><?php echo e($pm); ?></span>
+                            <?php if ($amount !== null): ?><span class="badge bg-success badge-large">Descuento en nómina: <?php echo e(number_format((float)$amount, 2, ',', '.')); ?> €/mes</span><?php endif; ?></div></div>
+                        <?php endif; ?>
+
+                        <?php if ($canEdit): ?>
+                        <details><summary class="small">Editar asignación</summary>
+                            <form method="POST" action="<?php echo e($selfUrl); ?>" class="mt-2 d-flex flex-column gap-2">
+                                <?php echo casCsrfField(); ?>
+                                <input type="hidden" name="action" value="update_member">
+                                <input type="hidden" name="mro_id" value="<?php echo (int)$m['mro_id']; ?>">
+                                <select name="mro_wkp_id" class="form-select form-select-sm"><?php echo $wkpOptions($wid ?: null); ?></select>
+                                <input type="text" name="mro_role" maxlength="100" class="form-control form-control-sm" placeholder="Cargo" value="<?php echo e($m['mro_role']); ?>">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" id="del_<?php echo (int)$m['mro_id']; ?>" name="mro_delegado" value="1" <?php echo (int)$m['mro_delegado'] === 1 ? 'checked' : ''; ?>>
+                                    <label class="form-check-label small" for="del_<?php echo (int)$m['mro_id']; ?>">Delegado/a (ve esta empresa)</label>
+                                </div>
+                                <button type="submit" class="btn btn-save btn-sm">Guardar</button>
+                            </form>
+                        </details>
                         <?php endif; ?>
                     </div>
                 </div>

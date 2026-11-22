@@ -5,9 +5,14 @@ Gestión de empresas, secciones sindicales y afiliación por empresa dentro de A
 ## Qué hace
 
 - Listado de empresas con búsqueda, filtros (sector, sección, portavoz) y paginación.
-- Ficha de empresa: datos, dirección, sección sindical (nombre, correo, portavoz) y miembros asignados con su cargo.
-- Para cada miembro muestra sus roles vigentes y, si existe el plugin SEPA, su forma de pago y el total a percibir por nómina.
-- Una empresa solo se puede borrar si no tiene miembros asignados.
+- Ficha de empresa: datos, sede, sección sindical (nombre, correo, portavoz) y miembros asignados.
+- **Centros de trabajo** por empresa (nombre, dirección, teléfono, notas). Cada miembro puede
+  asignarse a un centro y la lista de miembros se puede filtrar por centro.
+- En cada asignación: cargo y marca de **delegado/a**.
+- Para la secretaría, cada miembro muestra sus roles vigentes y, si existe el plugin SEPA, su forma de
+  pago y, si paga por nómina, su **descuento mensual personal** (no hay totales por empresa).
+- Una empresa solo se puede borrar si no tiene miembros. Al borrar un centro, sus miembros siguen en
+  la empresa sin centro.
 
 ## Qué NO hace
 
@@ -28,12 +33,18 @@ Gestión de empresas, secciones sindicales y afiliación por empresa dentro de A
    https://tu-servidor/adm_plugins/companies_and_sections/install.php
    ```
 3. Pulsa **Instalar**. El instalador:
-   - crea las tablas `crm_organizations` y `crm_member_organizations`,
+   - crea las tablas `crm_organizations`, `crm_workplaces` y `crm_member_organizations`,
    - añade la entrada **Empresas y secciones** al menú de Administración,
    - crea `config.php` (solo administradores) si no existe,
    - intenta borrarse. Si no puede, **borra `install.php` a mano**.
 
 Se puede ejecutar varias veces: solo crea lo que falte.
+
+### Actualizar desde una versión anterior
+
+Copia los ficheros nuevos (incluido `install.php`) y vuelve a ejecutar el instalador: añade la tabla de
+centros de trabajo y las columnas nuevas sin tocar los datos existentes. Mientras no se actualice, el
+plugin avisa a los administradores y no deja entrar a los delegados.
 
 ### Docker
 
@@ -48,7 +59,14 @@ volumes:
 
 ## Permisos
 
-Edita `config.php` (ver `config.example.php`):
+| Quién | Ve | Edita |
+|---|---|---|
+| Administradores | Todas las empresas | Todo |
+| Secretaría: roles de `allowed_roles` en `config.php` | Todas las empresas, con roles y forma de pago de cada miembro | Todo |
+| Delegados/as: marcados como delegado/a en una asignación, o portavoz de una sección | Solo sus empresas, sin roles ni datos de pago | Nada |
+| Resto | Nada | Nada |
+
+`config.php` (ver `config.example.php`):
 
 ```php
 <?php
@@ -60,13 +78,10 @@ return [
 ];
 ```
 
-- Los administradores siempre tienen acceso.
-- El resto necesita pertenecer **ahora** a uno de esos roles (una pertenencia terminada ya no da acceso).
-- Lista vacía = solo administradores.
+- Solo cuentan las pertenencias **vigentes** a esos roles.
+- Lista vacía = solo administradores (más los delegados, en modo lectura).
 - La entrada de menú es visible para todos por defecto; restríngela en Menú → editar entrada.
   Las páginas comprueban los permisos igualmente.
-
-El plugin muestra datos sensibles (roles, forma de pago). Da acceso solo a quien lo necesite.
 
 ## Seguridad
 
@@ -82,7 +97,7 @@ companies_and_sections/
 ├── organization_functions.php  # arranque, permisos, CSRF, utilidades
 ├── organizations.php           # listado
 ├── create_organization.php     # alta de empresa
-├── organization_profile.php    # ficha, edición y miembros
+├── organization_profile.php    # ficha, centros de trabajo y miembros
 ├── get_organizations.php       # JSON con las empresas activas (usuarios autorizados)
 ├── install.php                 # instalador (bórralo tras instalar)
 ├── config.example.php
@@ -95,6 +110,7 @@ companies_and_sections/
 2. Si quieres borrar también los datos:
    ```sql
    DROP TABLE crm_member_organizations;
+   DROP TABLE crm_workplaces;
    DROP TABLE crm_organizations;
    ```
 3. Borra la carpeta del plugin.

@@ -11,6 +11,7 @@
 require_once(__DIR__ . '/organization_functions.php');
 
 casRequireAuth();
+casRequireEdit();
 
 $headline = 'Nueva empresa';
 $gNavigation->addUrl(CURRENT_URL, $headline);

@@ -2,9 +2,11 @@
 /**
  * Companies and Sections Plugin - Main Page
  *
- * List of companies with filters, pagination, member counts and (optional) SEPA payroll totals.
+ * List of companies with filters, pagination and member counts.
+ * Secretariat (config.php roles): all companies, can create/delete.
+ * Delegates: only their own companies, read only.
  *
- * POST ACTIONS (CSRF protected):
+ * POST ACTIONS (CSRF protected, secretariat only):
  * - delete_org: deletes a company, only if it has no active members
  *
  * @package CompaniesAndSections
@@ -31,12 +33,13 @@ if (isset($_GET['created'])) {
 }
 
 // Tables installed?
-// with $showError = false, queryPrepared() returns false instead of stopping the page
-$tablesExist = $gDb->queryPrepared('SELECT 1 FROM ' . CAS_TBL_ORGS . ' LIMIT 1', [], false) !== false;
+$tablesExist = casSchemaReady();
+$canEdit = casCanEdit();
 
 // ---------------------------------------------------------------- POST: delete
 if ($tablesExist && $_SERVER['REQUEST_METHOD'] === 'POST') {
     casCheckCsrf();
+    casRequireEdit();
     if (($_POST['action'] ?? '') === 'delete_org') {
         $delId = (int)($_POST['org_id'] ?? 0);
         try {
@@ -64,8 +67,6 @@ $orgs = [];
 $memberCounts = [];
 $totalOrgs = 0;
 $totalPages = 1;
-$sepa = ['enabled' => false, 'amounts' => []];
-$totalNominaGlobal = 0.0;
 $users = casUserList();
 
 $searchTerm = trim((string)($_GET['search'] ?? ''));
@@ -94,6 +95,11 @@ if ($tablesExist) {
 
     $conditions = ['org_active = 1'];
     $params = [];
+    if (!$canEdit) {   // delegates: only their companies
+        $own = casDelegateOrgIds() ?: [0];
+        $conditions[] = 'org_id IN (' . implode(',', array_fill(0, count($own), '?')) . ')';
+        $params = array_merge($params, $own);
+    }
     if ($searchTerm !== '') {
         $conditions[] = '(org_name LIKE ? OR org_nombre_comercial LIKE ? OR org_razon_social LIKE ? OR org_cif LIKE ?)';
         $like = '%' . addcslashes($searchTerm, '%_\\') . '%';
@@ -138,19 +144,6 @@ if ($tablesExist) {
         $memberCounts[$oid] = count($list);
     }
 
-    $visibleUserIds = [];
-    foreach ($orgs as $org) {
-        $visibleUserIds = array_merge($visibleUserIds, $orgMembers[(int)$org['org_id']] ?? []);
-    }
-    $sepa = casSepaInfo(array_values(array_unique($visibleUserIds)));
-    foreach ($orgs as $i => $org) {
-        $sum = 0.0;
-        foreach ($orgMembers[(int)$org['org_id']] ?? [] as $uid) {
-            $sum += $sepa['amounts'][$uid] ?? 0;
-        }
-        $orgs[$i]['total_nomina'] = $sum;
-        $totalNominaGlobal += $sum;
-    }
 }
 
 $page = \Admidio\UI\Presenter\PagePresenter::withHtmlIDAndHeadline('companies-and-sections', $headline);
@@ -173,9 +166,6 @@ $page->addHtml('
 .pagination-custom { display:flex; justify-content:space-between; align-items:center; padding:15px; border-top:1px solid #dee2e6; }
 .pagination-info { color:#6c757d; font-size:.85rem; } .pagination-controls { display:flex; align-items:center; gap:10px; }
 .page-link { color:var(--cnt-red); }
-.nomina-card { background:linear-gradient(135deg,var(--cnt-red) 0%,#c41e3a 100%); color:#fff; border-radius:12px; padding:1rem 1.5rem; display:flex; align-items:center; gap:1.5rem; margin-bottom:1.5rem; flex-wrap:wrap; }
-.nomina-card .amount { font-size:2.25rem; font-weight:700; line-height:1; } .nomina-card .label { font-size:.9rem; opacity:.9; }
-.nomina-card .stats { display:flex; gap:2rem; margin-left:auto; } .nomina-card .stat { text-align:center; } .nomina-card .stat-value { font-size:1.25rem; font-weight:700; } .nomina-card .stat-label { font-size:.75rem; opacity:.85; }
 </style>');
 
 $query = array_filter([
@@ -191,37 +181,15 @@ ob_start();
 <?php endif; ?>
 
 <div class="crm-header">
-    <h4 class="mb-0"><i class="bi bi-buildings"></i> <?php echo (int)$totalOrgs; ?> empresas</h4>
+    <h4 class="mb-0"><i class="bi bi-buildings"></i> <?php echo (int)$totalOrgs; ?> empresas<?php echo $canEdit ? '' : ' (tus empresas, solo lectura)'; ?></h4>
 </div>
 
 <?php if (!$tablesExist): ?>
 <div class="alert alert-warning">
-    <i class="bi bi-exclamation-triangle"></i> Las tablas del plugin no existen.
-    <?php if ($gCurrentUser->isAdministrator()): ?><a href="<?php echo e(CAS_URL . '/install.php'); ?>">Ejecuta el instalador</a>.<?php endif; ?>
+    <i class="bi bi-exclamation-triangle"></i> Las tablas del plugin no existen o son de una versión anterior.
+    <?php if ($gCurrentUser->isAdministrator()): ?>Sube <code>install.php</code> y <a href="<?php echo e(CAS_URL . '/install.php'); ?>">ejecuta el instalador</a> para crearlas o actualizarlas.<?php endif; ?>
 </div>
 <?php else: ?>
-
-<?php if ($sepa['enabled'] && $totalNominaGlobal > 0):
-    $countConSeccion = 0;
-    $totalMiembros = 0;
-    foreach ($orgs as $org) {
-        $countConSeccion += $org['org_tiene_seccion'] ? 1 : 0;
-        $totalMiembros += $memberCounts[(int)$org['org_id']] ?? 0;
-    }
-?>
-<div class="nomina-card">
-    <i class="bi bi-wallet2" style="font-size:2rem"></i>
-    <div>
-        <div class="amount"><?php echo e(number_format($totalNominaGlobal, 2, ',', '.')); ?> €</div>
-        <div class="label">Total a percibir por nómina / mes (empresas de esta página)</div>
-    </div>
-    <div class="stats">
-        <div class="stat"><div class="stat-value"><?php echo count($orgs); ?></div><div class="stat-label">Empresas</div></div>
-        <div class="stat"><div class="stat-value"><?php echo (int)$totalMiembros; ?></div><div class="stat-label">Miembros</div></div>
-        <div class="stat"><div class="stat-value"><?php echo (int)$countConSeccion; ?></div><div class="stat-label">Con sección</div></div>
-    </div>
-</div>
-<?php endif; ?>
 
 <div class="filter-card">
     <form method="GET" action="organizations.php" class="row g-2 align-items-end">
@@ -278,7 +246,7 @@ ob_start();
 <div class="card">
     <div class="card-header d-flex justify-content-between align-items-center" style="background:var(--cnt-black-light);color:#fff;">
         <span><i class="bi bi-list"></i> Listado de empresas</span>
-        <a href="create_organization.php" class="btn-create"><i class="bi bi-plus-circle"></i> Nueva empresa</a>
+        <?php if ($canEdit): ?><a href="create_organization.php" class="btn-create"><i class="bi bi-plus-circle"></i> Nueva empresa</a><?php endif; ?>
     </div>
     <div class="card-body p-0">
         <?php if (!$orgs): ?>
@@ -294,7 +262,6 @@ ob_start();
                         <th>Nombre</th><th>CIF</th><th>Sector</th><th class="text-center">¿Sección?</th>
                         <th>Nombre sección</th><th class="text-center">Correo sección</th><th>Portavoz sección</th>
                         <th class="text-center">Miembros</th>
-                        <?php if ($sepa['enabled']): ?><th class="text-end">Nómina/mes</th><?php endif; ?>
                         <th class="text-center">Acciones</th>
                     </tr>
                 </thead>
@@ -333,13 +300,10 @@ ob_start();
                             <?php else: ?>-<?php endif; ?>
                         </td>
                         <td class="text-center"><span class="badge badge-custom badge-miem"><i class="bi bi-people"></i> <?php echo (int)$memberCount; ?></span></td>
-                        <?php if ($sepa['enabled']): ?>
-                        <td class="text-end fw-bold text-danger"><?php echo e(number_format((float)$org['total_nomina'], 2, ',', '.')); ?> €</td>
-                        <?php endif; ?>
                         <td>
                             <div class="actions-cell">
                                 <a href="<?php echo e($profileUrl); ?>" class="btn btn-ver btn-sm"><i class="bi bi-eye"></i> Ver</a>
-                                <?php if ($memberCount === 0): ?>
+                                <?php if ($canEdit && $memberCount === 0): ?>
                                 <form method="POST" action="organizations.php" class="d-inline" onsubmit="return confirm('¿Eliminar esta empresa?');">
                                     <?php echo casCsrfField(); ?>
                                     <input type="hidden" name="action" value="delete_org">

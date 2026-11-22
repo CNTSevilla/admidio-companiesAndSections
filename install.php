@@ -3,12 +3,13 @@
  * Companies and Sections Plugin - Installer for Admidio 5.x
  *
  * What it does (and nothing else):
- * 1. Creates the tables crm_organizations and crm_member_organizations
- * 2. Adds the menu entry "Empresas y secciones" under Administration
- * 3. Creates config.php (only administrators) if it does not exist
+ * 1. Creates the tables crm_organizations, crm_workplaces and crm_member_organizations
+ * 2. Upgrades older installs (adds the workplace and delegate columns)
+ * 3. Adds the menu entry "Empresas y secciones" under Administration
+ * 4. Creates config.php (only administrators) if it does not exist
  *
  * It does NOT modify any Admidio core file or template and does NOT create profile fields.
- * Can be run again safely: it only creates what is missing.
+ * Can be run again safely: it only creates or adds what is missing. Use it also to UPGRADE.
  *
  * Usage (as Admidio administrator):
  *   https://your-server/adm_plugins/companies_and_sections/install.php
@@ -70,6 +71,27 @@ function casCreateTables(): array
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
     $out[] = ['info', 'Tabla ' . CAS_TBL_ORGS . ($orgsExisted ? ' ya existía (no se ha modificado).' : ' creada.')];
 
+    $wkpExisted = $gDb->queryPrepared('SELECT 1 FROM ' . CAS_TBL_WORKPLACES . ' LIMIT 1', [], false) !== false;
+    $gDb->queryPrepared('
+        CREATE TABLE IF NOT EXISTS ' . CAS_TBL_WORKPLACES . ' (
+            wkp_id               INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+            wkp_uuid             VARCHAR(36)  NOT NULL UNIQUE,
+            wkp_org_id           INT UNSIGNED NOT NULL,
+            wkp_name             VARCHAR(100) NOT NULL,
+            wkp_calles           VARCHAR(255) DEFAULT NULL,
+            wkp_cp               VARCHAR(10)  DEFAULT NULL,
+            wkp_localidad        VARCHAR(100) DEFAULT NULL,
+            wkp_provincia        VARCHAR(100) DEFAULT NULL,
+            wkp_telefono         VARCHAR(20)  DEFAULT NULL,
+            wkp_notas            TEXT,
+            wkp_usr_id_create    INT UNSIGNED DEFAULT NULL,
+            wkp_timestamp_create TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uk_wkp_org_name (wkp_org_id, wkp_name),
+            CONSTRAINT fk_crm_wkp_org FOREIGN KEY (wkp_org_id)
+                REFERENCES ' . CAS_TBL_ORGS . ' (org_id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
+    $out[] = ['info', 'Tabla ' . CAS_TBL_WORKPLACES . ($wkpExisted ? ' ya existía.' : ' creada.')];
+
     $gDb->queryPrepared('
         CREATE TABLE IF NOT EXISTS ' . CAS_TBL_MEMBERS . ' (
             mro_id               INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
@@ -80,14 +102,60 @@ function casCreateTables(): array
             mro_active           TINYINT(1)   NOT NULL DEFAULT 1,
             mro_timestamp_create TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
             mro_usr_id_create    INT UNSIGNED DEFAULT NULL,
+            mro_wkp_id           INT UNSIGNED DEFAULT NULL,
+            mro_delegado         TINYINT(1)   NOT NULL DEFAULT 0,
             UNIQUE KEY uk_member_org (mro_usr_id, mro_org_id),
             KEY idx_org_id (mro_org_id),
             CONSTRAINT fk_crm_mro_org FOREIGN KEY (mro_org_id)
                 REFERENCES ' . CAS_TBL_ORGS . ' (org_id) ON DELETE CASCADE,
             CONSTRAINT fk_crm_mro_usr FOREIGN KEY (mro_usr_id)
-                REFERENCES ' . TBL_USERS . ' (usr_id) ON DELETE CASCADE
+                REFERENCES ' . TBL_USERS . ' (usr_id) ON DELETE CASCADE,
+            CONSTRAINT fk_crm_mro_wkp FOREIGN KEY (mro_wkp_id)
+                REFERENCES ' . CAS_TBL_WORKPLACES . ' (wkp_id) ON DELETE SET NULL
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci');
-    $out[] = ['info', 'Tabla ' . CAS_TBL_MEMBERS . ($memExisted ? ' ya existía (no se ha modificado).' : ' creada.')];
+    $out[] = ['info', 'Tabla ' . CAS_TBL_MEMBERS . ($memExisted ? ' ya existía.' : ' creada.')];
+
+    // --- upgrade of installs made before workplaces/delegates existed
+    $out = array_merge($out, casUpgradeMembersTable());
+    return $out;
+}
+
+function casColumnExists(string $table, string $column): bool
+{
+    global $gDb;
+    return (int)$gDb->queryPrepared(
+        'SELECT COUNT(*) FROM information_schema.COLUMNS
+          WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+        [$table, $column]
+    )->fetchColumn() > 0;
+}
+
+function casConstraintExists(string $table, string $name): bool
+{
+    global $gDb;
+    return (int)$gDb->queryPrepared(
+        'SELECT COUNT(*) FROM information_schema.TABLE_CONSTRAINTS
+          WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = ? AND CONSTRAINT_NAME = ?',
+        [$table, $name]
+    )->fetchColumn() > 0;
+}
+
+function casUpgradeMembersTable(): array
+{
+    global $gDb;
+    $out = [];
+    if (!casColumnExists(CAS_TBL_MEMBERS, 'mro_wkp_id')) {
+        $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_MEMBERS . ' ADD COLUMN mro_wkp_id INT UNSIGNED DEFAULT NULL');
+        $out[] = ['ok', 'Actualización: añadida la columna de centro de trabajo a las asignaciones.'];
+    }
+    if (!casColumnExists(CAS_TBL_MEMBERS, 'mro_delegado')) {
+        $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_MEMBERS . ' ADD COLUMN mro_delegado TINYINT(1) NOT NULL DEFAULT 0');
+        $out[] = ['ok', 'Actualización: añadida la marca de delegado/a a las asignaciones.'];
+    }
+    if (!casConstraintExists(CAS_TBL_MEMBERS, 'fk_crm_mro_wkp')) {
+        $gDb->queryPrepared('ALTER TABLE ' . CAS_TBL_MEMBERS . ' ADD CONSTRAINT fk_crm_mro_wkp FOREIGN KEY (mro_wkp_id)
+                             REFERENCES ' . CAS_TBL_WORKPLACES . ' (wkp_id) ON DELETE SET NULL');
+    }
     return $out;
 }
 
@@ -166,7 +234,7 @@ ob_start();
 <?php else: ?>
 <p>Este instalador:</p>
 <ul>
-    <li>Crea las tablas <code><?php echo e(CAS_TBL_ORGS); ?></code> y <code><?php echo e(CAS_TBL_MEMBERS); ?></code>.</li>
+    <li>Crea las tablas <code><?php echo e(CAS_TBL_ORGS); ?></code>, <code><?php echo e(CAS_TBL_WORKPLACES); ?></code> y <code><?php echo e(CAS_TBL_MEMBERS); ?></code>, o las actualiza si ya existían.</li>
     <li>Añade la entrada de menú <strong>Empresas y secciones</strong> en Administración.</li>
     <li>Crea <code>config.php</code> si no existe.</li>
 </ul>
